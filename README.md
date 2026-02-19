@@ -91,6 +91,34 @@ sdk.doc('users', 1).onSnapshot(({ action, record: user }) => {
 });
 ```
 
+**範例：新增、更新與刪除資料**
+
+```typescript
+const users = sdk.collection('users');
+
+// 新增資料
+await users.add({ name: 'Alice', email: 'alice@example.com' });
+
+// 更新單筆資料
+const aliceDoc = sdk.doc('users', 1);
+await aliceDoc.update({ name: 'Alice Smith' });
+
+// 刪除資料
+await aliceDoc.delete();
+```
+
+**範例：使用伺服器時間戳記 (Server Timestamp)**
+
+```typescript
+import { FieldValue } from 'pg-trigger-manager/client';
+
+// 新增文章並自動設定建立時間 (使用 PG now())
+await sdk.collection('posts').add({
+  title: 'Hello Vanilla',
+  createdAt: FieldValue.serverTimestamp()
+});
+```
+
 ### 可靠性與追補機制
 
 SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid) 與後端的 `audit_log` 機制，當您的應用程式重新連線時，SDK 會自動請求補發所有遺漏的異動事件。

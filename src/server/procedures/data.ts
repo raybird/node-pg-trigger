@@ -81,6 +81,61 @@ function buildOrderByClause(orderBy: any[] | undefined) {
   return `ORDER BY ${parts.join(', ')}`;
 }
 
+/**
+ * 輔助函式：處理寫入資料 (支援 FieldValue)
+ */
+function prepareWrite(record: Record<string, any>, startParamIndex: number) {
+  const keys = Object.keys(record);
+  const sqlValues: string[] = [];
+  const params: any[] = [];
+  let currentIndex = startParamIndex;
+
+  keys.forEach(key => {
+    const val = record[key];
+    // 檢查是否為 FieldValue 哨兵值 (考慮 JSON 序列化後的格式)
+    if (val && typeof val === 'object' && val.type === 'SERVER_TIMESTAMP' && val._isFieldValue) {
+      sqlValues.push('now()');
+    } else {
+      sqlValues.push(`$${currentIndex}`);
+      params.push(val);
+      currentIndex++;
+    }
+  });
+
+  return {
+    columns: keys.map(k => `"${k}"`).join(', '),
+    placeholders: sqlValues.join(', '),
+    params
+  };
+}
+
+/**
+ * 輔助函式：處理更新資料 (支援 FieldValue)
+ */
+function prepareUpdate(record: Record<string, any>, startParamIndex: number) {
+  const keys = Object.keys(record);
+  const setParts: string[] = [];
+  const params: any[] = [];
+  let currentIndex = startParamIndex;
+
+  keys.forEach(key => {
+    const val = record[key];
+    if (val && typeof val === 'object' && val.type === 'SERVER_TIMESTAMP' && val._isFieldValue) {
+      setParts.push(`"${key}" = now()`);
+    } else {
+      setParts.push(`"${key}" = $${currentIndex}`);
+      params.push(val);
+      currentIndex++;
+    }
+  });
+
+  return {
+    setClause: setParts.join(', '),
+    params,
+    lastIndex: currentIndex
+  };
+}
+
 export const dataRouter = router({
   /**
    * Query: 獲取資料表中的資料（支援過濾與排序）
@@ -157,16 +212,14 @@ export const dataRouter = router({
     .input(WriteInput)
     .mutation(async ({ input, ctx }) => {
       const { tableName, schemaName, record } = input;
-      const keys = Object.keys(record);
-      const values = Object.values(record);
-      const columns = keys.map(k => `"${k}"`).join(', ');
-      const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+      const { columns, placeholders, params } = prepareWrite(record, 1);
+      
       const sql = `INSERT INTO "${schemaName}"."${tableName}" (${columns}) VALUES (${placeholders}) RETURNING *;`;
 
       if (ctx.user) {
         const udb = await db.withUser(ctx.user.id);
         try {
-          const result = await udb.query(sql, values);
+          const result = await udb.query(sql, params);
           await udb.commit();
           return result.rows[0];
         } catch (error: any) {
@@ -177,7 +230,7 @@ export const dataRouter = router({
         }
       }
 
-      const result = await db.query(sql, values);
+      const result = await db.query(sql, params);
       return result.rows[0];
     }),
 
@@ -188,16 +241,16 @@ export const dataRouter = router({
     .input(UpdateInput)
     .mutation(async ({ input, ctx }) => {
       const { tableName, schemaName, id, idField, record } = input;
-      const keys = Object.keys(record);
-      const values = Object.values(record);
+      const { setClause, params, lastIndex } = prepareUpdate(record, 1);
       
-      const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(', ');
-      const sql = `UPDATE "${schemaName}"."${tableName}" SET ${setClause} WHERE "${idField}" = $${keys.length + 1} RETURNING *;`;
+      const sql = `UPDATE "${schemaName}"."${tableName}" SET ${setClause} WHERE "${idField}" = $${lastIndex} RETURNING *;`;
       
+      const allParams = [...params, id];
+
       if (ctx.user) {
         const udb = await db.withUser(ctx.user.id);
         try {
-          const result = await udb.query(sql, [...values, id]);
+          const result = await udb.query(sql, allParams);
           await udb.commit();
           return result.rows[0] || null;
         } catch (error: any) {
@@ -208,7 +261,7 @@ export const dataRouter = router({
         }
       }
 
-      const result = await db.query(sql, [...values, id]);
+      const result = await db.query(sql, allParams);
       return result.rows[0] || null;
     }),
 

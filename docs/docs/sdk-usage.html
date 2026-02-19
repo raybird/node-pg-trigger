@@ -9,4 +9,11 @@ sdk.collection('users').onSnapshot(({ action, record }) => {
     console.log('異動類型：', action);
     console.log('最新資料：', record);
 });
+
+// 使用伺服器端時間戳記
+import { FieldValue } from './client';
+await sdk.collection('posts').add({
+    title: 'New Post',
+    createdAt: FieldValue.serverTimestamp()
+});
 </code></pre>

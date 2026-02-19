@@ -26,6 +26,24 @@ export interface SortItem {
 }
 
 /**
+ * FieldValue - 支援特殊伺服器端值的處理
+ */
+export class FieldValue {
+  private constructor(public readonly type: string) {}
+
+  static serverTimestamp() {
+    return new FieldValue('SERVER_TIMESTAMP');
+  }
+
+  static isFieldValue(val: any): val is FieldValue {
+    return val instanceof FieldValue || (val && val._isFieldValue === true);
+  }
+
+  // 為了跨環境傳輸時保持型別資訊
+  get _isFieldValue() { return true; }
+}
+
+/**
  * Query 類別 - 支援過濾、排序與分頁
  */
 export class Query<T = any> {
