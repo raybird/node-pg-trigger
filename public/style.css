@@ -1,0 +1,58 @@
+:root {
+    --bg-color: #ffffff;
+    --text-color: #333;
+    --primary-color: #007bff;
+    --nav-bg: #f8f9fa;
+    --border-color: #eee;
+}
+
+body {
+    font-family: system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    margin: 0;
+    color: var(--text-color);
+}
+
+.app-container {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 280px;
+    background: var(--nav-bg);
+    border-right: 1px solid var(--border-color);
+    padding: 2rem 1.5rem;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    box-sizing: border-box;
+}
+
+.main-content {
+    flex: 1;
+    padding: 3rem;
+    max-width: 800px;
+}
+
+.nav-link {
+    display: block;
+    padding: 0.5rem 0;
+    color: var(--text-color);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.nav-link:hover, .nav-link.active {
+    color: var(--primary-color);
+    font-weight: bold;
+}
+
+h1, h2, h3 { color: #000; }
+pre {
+    background: #f4f4f4;
+    padding: 1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+}
+code { font-family: monospace; }

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PG Trigger Manager Example</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        #messages { border: 1px solid #ccc; padding: 10px; min-height: 150px; overflow-y: scroll; }
+        .message { margin-bottom: 5px; padding: 5px; background-color: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <h1>PG Trigger Manager Example</h1>
+
+    <p>打開瀏覽器的開發者工具 (F12) 查看控制台輸出，以觀察資料庫事件。</p>
+
+    <h2>觸發器管理</h2>
+    <label for="tableName">資料表名稱:</label>
+    <input type="text" id="tableName" value="users">
+    <button id="createTrigger">建立觸發器</button>
+    <button id="listTriggers">列出觸發器</button>
+    <button id="deleteTrigger">刪除觸發器</button>
+
+    <h2>資料庫事件</h2>
+    <div id="messages"></div>
+
+    <script type="module">
+    import { createTRPCProxyClient, httpBatchLink, wsLink, splitLink } from 'https://cdn.jsdelivr.net/npm/@trpc/client@10.45.2/dist/index.mjs';
+    import { observable } from 'https://cdn.jsdelivr.net/npm/@trpc/server@10.45.2/dist/observable.mjs';
+
+    // 為了簡化範例，這裡直接引入後端的 AppRouter 型別
+    // 在實際專案中，您可能會從一個共享的套件中引入這個型別
+
+    // 模擬 AppRouter 的型別，因為我們無法直接從後端引入
+    // 在實際專案中，這應該是從後端生成的型別定義
+    type MockAppRouter = {
+        trigger: {
+            create: {
+                mutate: (input: { tableName: string }) => Promise<{ success: boolean; message: string; }>,
+            },
+            list: {
+                query: () => Promise<Array<{ trigger_name: string; table_name: string; }>>,
+            },
+            delete: {
+                mutate: (input: { tableName: string }) => Promise<{ success: boolean; message: string; }>,
+            },
+        },
+        onDbEvent: {
+            subscribe: (input: undefined, opts: { onData: (data: any) => void; onError: (err: any) => void; }) => void,
+        },
+    };
+
+    const backendUrl = 'http://localhost:5000';
+    const wsUrl = 'ws://localhost:5000';
+
+    const client = createTRPCProxyClient<MockAppRouter>({
+        links: [
+            splitLink({
+                condition: (op) => op.type === 'subscription',
+                true: wsLink({
+                    url: wsUrl,
+                }),
+                false: httpBatchLink({
+                    url: backendUrl + '/trpc',
+                }),
+            }),
+        ],
+    });
+
+    const tableNameInput = document.getElementById('tableName') as HTMLInputElement;
+    const createTriggerBtn = document.getElementById('createTrigger') as HTMLButtonElement;
+    const listTriggersBtn = document.getElementById('listTriggers') as HTMLButtonElement;
+    const deleteTriggerBtn = document.getElementById('deleteTrigger') as HTMLButtonElement;
+    const messagesDiv = document.getElementById('messages') as HTMLDivElement;
+
+    function addMessage(text: string, type: 'info' | 'error' = 'info') {
+        const p = document.createElement('p');
+        p.className = 'message';
+        if (type === 'error') {
+            p.style.color = 'red';
+        }
+        p.innerText = text;
+        messagesDiv.prepend(p);
+    }
+
+    createTriggerBtn.addEventListener('click', async () => {
+        const tableName = tableNameInput.value;
+        if (!tableName) {
+            addMessage('請輸入資料表名稱！', 'error');
+            return;
+        }
+        try {
+            const result = await client.trigger.create.mutate({ tableName });
+            addMessage(`建立觸發器結果: ${result.message}`);
+        } catch (error) {
+            addMessage(`建立觸發器失敗: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    });
+
+    listTriggersBtn.addEventListener('click', async () => {
+        try {
+            const triggers = await client.trigger.list.query();
+            if (triggers.length === 0) {
+                addMessage('目前沒有觸發器。');
+            } else {
+                addMessage('目前觸發器列表:');
+                triggers.forEach(t => addMessage(`- ${t.trigger_name} (表: ${t.table_name})`));
+            }
+        } catch (error) {
+            addMessage(`列出觸發器失敗: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    });
+
+    deleteTriggerBtn.addEventListener('click', async () => {
+        const tableName = tableNameInput.value;
+        if (!tableName) {
+            addMessage('請輸入資料表名稱！', 'error');
+            return;
+        }
+        try {
+            const result = await client.trigger.delete.mutate({ tableName });
+            addMessage(`刪除觸發器結果: ${result.message}`);
+        } catch (error) {
+            addMessage(`刪除觸發器失敗: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    });
+
+    // 訂閱資料庫事件
+    addMessage('正在訂閱資料庫事件...');
+    client.onDbEvent.subscribe(undefined, {
+        onData(event) {
+            addMessage(`🎉 收到資料庫事件: ${JSON.stringify(event, null, 2)}`);
+            console.log('🎉 New database event received:', event);
+        },
+        onError(err) {
+            addMessage(`訂閱錯誤: ${err instanceof Error ? err.message : String(err)}`, 'error');
+            console.error('Subscription error:', err);
+        },
+    });
+
+    addMessage('前端應用已啟動。');
+</script>
+</body>
+</html>

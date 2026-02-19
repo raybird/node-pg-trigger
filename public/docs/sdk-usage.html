@@ -1,0 +1,12 @@
+<h1>💎 SDK 使用指南</h1>
+<p>我們的 SDK 提供了一套極簡的介面來與資料庫互動。</p>
+<pre><code>
+import { createSdk } from './client';
+const sdk = createSdk('http://localhost:5000');
+
+// 訂閱資料
+sdk.collection('users').onSnapshot(({ action, record }) => {
+    console.log('異動類型：', action);
+    console.log('最新資料：', record);
+});
+</code></pre>
