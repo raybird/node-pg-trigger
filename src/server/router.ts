@@ -3,6 +3,8 @@ import { triggerRouter } from './procedures/trigger';
 import { dataRouter } from './procedures/data';
 import { observable } from '@trpc/server/observable';
 import { dbNotificationListener } from './lib/listener';
+import { db } from './lib/db';
+import { z } from 'zod';
 
 export const appRouter = router({
   /**
@@ -16,25 +18,64 @@ export const appRouter = router({
   data: dataRouter,
 
   /**
-   * Subscription: 訂閱資料庫事件
+   * Subscription: 訂閱資料庫事件 (支援斷線追補)
    */
-  onDbEvent: procedure.subscription(() => {
-    // 使用 tRPC 的 observable 來建立一個 subscription
-    return observable<any>((emit) => {
-      const handleNotification = (payload: any) => {
-        // 當監聽器收到通知時，透過 emit.next() 將資料傳送給客戶端
-        emit.next(payload);
-      };
+  onDbEvent: procedure
+    .input(z.object({
+      lastTxid: z.string().optional().or(z.number().optional()),
+    }).optional())
+    .subscription(({ ctx, input }) => {
+      return observable<any>((emit) => {
+        const lastTxid = input?.lastTxid ? BigInt(input.lastTxid) : null;
 
-      // 監聽 'notification' 事件
-      dbNotificationListener.on('notification', handleNotification);
+        const handleNotification = async (payload: any) => {
+          // RLS 安全過濾
+          if (ctx.user) {
+            const targetRecord = payload.action === 'delete' ? payload.old_record : payload.record;
+            if (targetRecord) {
+              const hasAccess = await db.checkRls(ctx.user.id, payload.table, targetRecord);
+              if (!hasAccess) return;
+            }
+          }
+          emit.next(payload);
+        };
 
-      // 當 subscription 結束時，取消監聽，防止記憶體洩漏
-      return () => {
-        dbNotificationListener.off('notification', handleNotification);
-      };
-    });
-  }),
+        // 啟動追補邏輯
+        const startSubscription = async () => {
+          if (lastTxid !== null) {
+            console.log(`📡 Re-syncing events since txid: ${lastTxid}`);
+            try {
+              // 撈取遺漏的事件
+              const sql = `
+                SELECT 
+                  timestamp, txid, action, schema_name as schema, table_name as "table", record, old_record 
+                FROM public.audit_log 
+                WHERE txid > $1 
+                ORDER BY txid ASC 
+                LIMIT 1000;
+              `;
+              const result = await db.query(sql, [lastTxid.toString()]);
+              
+              for (const row of result.rows) {
+                await handleNotification(row);
+              }
+              console.log(`✅ Re-synced ${result.rows.length} events.`);
+            } catch (err) {
+              console.error('[Re-sync Error]', err);
+            }
+          }
+
+          // 進入即時監聽模式
+          dbNotificationListener.on('notification', handleNotification);
+        };
+
+        startSubscription();
+
+        return () => {
+          dbNotificationListener.off('notification', handleNotification);
+        };
+      });
+    }),
 });
 
 // 匯出 AppRouter 的型別，供前端使用

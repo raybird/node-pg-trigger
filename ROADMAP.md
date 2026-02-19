@@ -20,15 +20,16 @@
     - [x] `doc.update(data)` 實作。
     - [x] `doc.delete()` 實作。
 
-## 🔒 階段二：安全性與可靠性 (Security & Reliability)
-- [ ] **連線恢復機制**：
+## 🔒 階段二：安全性與可靠性 (Completed)
+- [x] **連線恢復機制**：
     - [x] 在 DB Payload 中加入 `txid` (交易 ID) 作為事件序號。
-    - [ ] 實作自動斷線重連後的資料追補。
-- [ ] **Row-Level Security (RLS) 整合**：
+    - [x] 建立 `audit_log` 資料表持久化異動歷史。
+    - [x] 實作自動斷線重連後的資料追補 (Re-sync via `lastTxid`)。
+- [x] **Row-Level Security (RLS) 整合**：
     - [x] 實作 SDK `auth()` 與 `signOut()` 介面。
-    - [x] tRPC Context 整合使用者身分提取。
+    - [x] tRPC Context 整合使用者身分提取 (Headers & WS Query)。
     - [x] 資料庫層支援 `SET LOCAL "request.user_id"` (Session User)。
-    - [ ] 確保訂閱事件 (Subscription) 同樣受到 RLS 過濾。
+    - [x] 確保訂閱事件 (Subscription) 同樣受到 RLS 過濾。
 
 ## ⚡ 階段三：效能與規模化 (Scale)
 - [ ] **多租戶支持 (Multi-tenancy)**：

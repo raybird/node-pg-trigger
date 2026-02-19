@@ -1,32 +1,54 @@
--- 建立一個通用的通知函式，用於被觸發器呼叫
+-- 建立稽核日誌資料表，用於儲存異動歷史以支援斷線重連追補
+CREATE TABLE IF NOT EXISTS public.audit_log (
+  id bigserial PRIMARY KEY,
+  txid bigint NOT NULL,
+  timestamp timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  action text NOT NULL,
+  schema_name text NOT NULL,
+  table_name text NOT NULL,
+  record jsonb,
+  old_record jsonb
+);
+
+-- 建立索引以優化追補查詢
+CREATE INDEX IF NOT EXISTS idx_audit_log_txid ON public.audit_log(txid);
+
+-- 更新通知函式，使其同時寫入 audit_log
 CREATE OR REPLACE FUNCTION public.notify_trigger()
  RETURNS trigger
  LANGUAGE plpgsql
 AS $function$
 DECLARE
-  rec JSON;
-  dat JSON;
+  rec JSONB;
+  dat JSONB;
   payload TEXT;
+  current_txid bigint;
 BEGIN
+  current_txid := txid_current();
+
   -- 根據操作類型設定記錄
   CASE TG_OP
     WHEN 'UPDATE' THEN
-      rec := row_to_json(NEW);
-      dat := row_to_json(OLD);
+      rec := to_jsonb(NEW);
+      dat := to_jsonb(OLD);
     WHEN 'INSERT' THEN
-      rec := row_to_json(NEW);
+      rec := to_jsonb(NEW);
       dat := NULL;
     WHEN 'DELETE' THEN
-      rec := row_to_json(OLD);
+      rec := to_jsonb(OLD);
       dat := NULL;
     ELSE
       RAISE EXCEPTION 'Unknown TG_OP: "%". Should not occur!', TG_OP;
   END CASE;
 
-  -- 建立 JSON payload
+  -- 1. 寫入 audit_log
+  INSERT INTO public.audit_log (txid, action, schema_name, table_name, record, old_record)
+  VALUES (current_txid, LOWER(TG_OP), TG_TABLE_SCHEMA, TG_TABLE_NAME, rec, dat);
+
+  -- 2. 建立 JSON payload 並發送通知
   payload := json_build_object(
     'timestamp', CURRENT_TIMESTAMP,
-    'txid', txid_current(),
+    'txid', current_txid,
     'action', LOWER(TG_OP),
     'schema', TG_TABLE_SCHEMA,
     'table', TG_TABLE_NAME,
@@ -34,11 +56,8 @@ BEGIN
     'old_record', dat
   );
 
-  -- 使用 'db_events' 作為固定 channel 名稱，並發送通知
   PERFORM pg_notify('db_events', payload);
 
-  -- 返回值在 AFTER trigger 中會被忽略，但函式需要它
-  -- 對於 INSERT 或 UPDATE，返回 NEW；對於 DELETE，返回 OLD
   IF (TG_OP = 'DELETE') THEN
     RETURN OLD;
   ELSE
@@ -46,16 +65,3 @@ BEGIN
   END IF;
 END;
 $function$;
-
--- 註解：如何使用此函式
-/*
--- 1. 先在你的資料庫中執行一次上面的 SQL 來建立 notify_trigger() 函式。
-
--- 2. 接著，為你想要監聽的資料表建立一個觸發器，將它掛載到這個函式上。
---    例如，為 "users" 資料表建立觸發器：
-CREATE TRIGGER users_notify_trigger
-AFTER INSERT OR UPDATE OR DELETE ON public.users
-FOR EACH ROW EXECUTE PROCEDURE public.notify_trigger();
-
--- 3. 現在，任何對 "users" 表的 CUD 操作都會觸發通知。
-*/

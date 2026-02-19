@@ -36,5 +36,33 @@ export const db = {
       client.release();
       throw err;
     }
+  },
+
+  /**
+   * 檢查特定記錄是否符合使用者的 RLS 權限
+   */
+  checkRls: async (userId: string, tableName: string, record: any, idField: string = 'id'): Promise<boolean> => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL "request.user_id" = $1`, [userId]);
+      
+      // 這裡我們透過查詢該 ID 是否存在來測試 RLS
+      // 如果 RLS policy 過濾掉，則會回傳 0 筆
+      const idValue = record[idField];
+      if (idValue === undefined) return true; // 無法檢查則預設通過 (或可改為嚴格模式)
+
+      const sql = `SELECT 1 FROM "${tableName}" WHERE "${idField}" = $1 LIMIT 1;`;
+      const result = await client.query(sql, [idValue]);
+      
+      await client.query('COMMIT');
+      return result.rowCount > 0;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('[RLS Check Error]', err);
+      return false;
+    } finally {
+      client.release();
+    }
   }
 };

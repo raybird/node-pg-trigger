@@ -91,21 +91,13 @@ sdk.doc('users', 1).onSnapshot(({ action, record: user }) => {
 });
 ```
 
-**範例：新增與更新資料**
+### 可靠性與追補機制
 
-```typescript
-const users = sdk.collection('users');
+SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid) 與後端的 `audit_log` 機制，當您的應用程式重新連線時，SDK 會自動請求補發所有遺漏的異動事件。
 
-// 新增資料
-await users.add({ name: 'Alice', email: 'alice@example.com' });
-
-// 更新單筆資料
-const aliceDoc = sdk.doc('users', 1);
-await aliceDoc.update({ name: 'Alice Smith' });
-
-// 刪除資料
-await aliceDoc.delete();
-```
+*   **自動追補**：斷線重連後，SDK 會自動從最後接收到的事件點開始追補。
+*   **資料一致性**：確保前端快取與資料庫狀態始終維持高度同步。
+*   **效能優化**：追補查詢經過索引優化，僅撈取必要的差異數據。
 
 ### 身分驗證與安全性 (RLS)
 

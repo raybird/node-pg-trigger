@@ -14,6 +14,7 @@ export type DbEvent<T = any> = {
 
 export class Collection<T = any> {
   private cache: T[] = [];
+  private lastTxid: string | number | null = null;
 
   constructor(private tableName: string, private sdk: any) {}
 
@@ -39,9 +40,12 @@ export class Collection<T = any> {
       console.error(`Failed to fetch initial snapshot for ${this.tableName}:`, err);
     }
 
-    const subscription = this.sdk.onDbEvent.subscribe(undefined, {
+    const subscription = this.sdk.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
       onData: (event: DbEvent<T>) => {
         if (event.table !== this.tableName) return;
+
+        // 紀錄最後 txid 以供下次追補
+        if (event.txid) this.lastTxid = event.txid;
 
         if (event.action === 'insert') {
           this.cache = [...this.cache, event.record as T];
@@ -73,6 +77,7 @@ export class Collection<T = any> {
 
 export class Document<T = any> {
   private cache: T | null = null;
+  private lastTxid: string | number | null = null;
 
   constructor(
     private tableName: string,
@@ -107,10 +112,13 @@ export class Document<T = any> {
       console.error(`Failed to fetch initial document for ${this.tableName}/${this.id}:`, err);
     }
 
-    const subscription = this.sdk.onDbEvent.subscribe(undefined, {
+    const subscription = this.sdk.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
       onData: (event: DbEvent<T>) => {
         if (event.table !== this.tableName) return;
         
+        // 紀錄最後 txid
+        if (event.txid) this.lastTxid = event.txid;
+
         const currentRecord = event.record as any;
         const oldRecord = event.old_record as any;
         
@@ -160,7 +168,9 @@ export class VanillaFirestore {
   }
 
   private initTrpc() {
-    const wsUrl = `${this.url.includes('https') ? 'wss' : 'ws'}://${this.url.split('//')[1]}`;
+    const baseUrl = this.url.endsWith('/') ? this.url : `${this.url}/`;
+    const wsUrl = `${this.url.includes('https') ? 'wss' : 'ws'}://${this.url.split('//')[1].split('/')[0]}/trpc${this.userId ? `?token=${this.userId}` : ''}`;
+    
     this.trpc = createTRPCProxyClient<AppRouter>({
       links: [
         splitLink({
@@ -169,7 +179,7 @@ export class VanillaFirestore {
           },
           true: this.getEndingLink(wsUrl),
           false: httpBatchLink({
-            url: this.url.endsWith('/') ? `${this.url}trpc` : `${this.url}/trpc`,
+            url: `${baseUrl}trpc`,
             headers: () => {
               return this.userId ? {
                 Authorization: `Bearer ${this.userId}`,
@@ -194,8 +204,6 @@ export class VanillaFirestore {
     }
     const client = createWSClient({
       url: wsUrl,
-      // 注意：WS 的認證通常需要透過 query params 或特定的協定處理
-      // 這裡先簡化處理，主要展示 HTTP 的 RLS 連動
     });
     return wsLink<AppRouter>({
       client,
