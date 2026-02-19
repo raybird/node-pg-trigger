@@ -1,6 +1,6 @@
 import createSubscriber from 'pg-listen';
-import { EventEmitter } from 'events';
 import { db } from './db';
+import { eventBus } from './event-bus';
 
 const NOTIFY_FUNCTION_SQL = `
 CREATE OR REPLACE FUNCTION public.notify_trigger()
@@ -47,18 +47,18 @@ END;
 $function$;
 `;
 
-class NotificationListener extends EventEmitter {
+class NotificationListener {
   private subscriber: ReturnType<typeof createSubscriber>;
 
   constructor() {
-    super();
     const databaseURL = `postgres://${process.env.POSTGRES_USER}:${process.env.POSTGRES_PASSWORD}@${process.env.POSTGRES_HOST}:${process.env.POSTGRES_PORT || 5432}/${process.env.POSTGRES_DB}`;
     
     this.subscriber = createSubscriber({ connectionString: databaseURL });
 
     this.subscriber.notifications.on('db_events', (payload) => {
       console.log('Received notification on db_events:', payload);
-      this.emit('notification', payload);
+      // 將事件分發至全域 EventBus
+      eventBus.publish(payload);
     });
 
     this.subscriber.events.on('error', (error) => {
@@ -85,14 +85,14 @@ class NotificationListener extends EventEmitter {
         if (!table) continue;
         const triggerName = `t_notify_${table}`;
         const sql = `
-          DO $
+          DO $$
           BEGIN
             IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_name = '${triggerName}') THEN
               CREATE TRIGGER ${triggerName}
               AFTER INSERT OR UPDATE OR DELETE ON "${table}"
               FOR EACH ROW EXECUTE PROCEDURE public.notify_trigger();
             END IF;
-          END $;
+          END $$;
         `;
         await db.query(sql);
         console.log(`📡 Auto-watching table: ${table}`);

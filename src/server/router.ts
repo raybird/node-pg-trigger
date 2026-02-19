@@ -4,6 +4,7 @@ import { dataRouter } from './procedures/data';
 import { observable } from '@trpc/server/observable';
 import { dbNotificationListener } from './lib/listener';
 import { db } from './lib/db';
+import { eventBus } from './lib/event-bus';
 import { z } from 'zod';
 
 export const appRouter = router({
@@ -40,12 +41,11 @@ export const appRouter = router({
           emit.next(payload);
         };
 
-        // 啟動追補邏輯
+        // 啟動追補與訂閱邏輯
         const startSubscription = async () => {
           if (lastTxid !== null) {
             console.log(`📡 Re-syncing events since txid: ${lastTxid}`);
             try {
-              // 撈取遺漏的事件
               const sql = `
                 SELECT 
                   timestamp, txid, action, schema_name as schema, table_name as "table", record, old_record 
@@ -65,14 +65,15 @@ export const appRouter = router({
             }
           }
 
-          // 進入即時監聽模式
-          dbNotificationListener.on('notification', handleNotification);
+          // 向全域事件總線訂閱
+          const unsubscribe = eventBus.subscribe(handleNotification);
+          return unsubscribe;
         };
 
-        startSubscription();
+        const subscriptionPromise = startSubscription();
 
         return () => {
-          dbNotificationListener.off('notification', handleNotification);
+          subscriptionPromise.then(unsubscribe => unsubscribe && unsubscribe());
         };
       });
     }),
