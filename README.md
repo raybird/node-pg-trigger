@@ -99,20 +99,24 @@ SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid)
 *   **資料一致性**：確保前端快取與資料庫狀態始終維持高度同步。
 *   **效能優化**：追補查詢經過索引優化，僅撈取必要的差異數據。
 
-### 多租戶與 Schema 支持
+### 進階查詢支援
 
-SDK 支援在非 `public` 的 Schema 中操作資料與建立監聽，這對於實作多租戶隔離架構非常有用。
+SDK 支援類似 Firestore 的鏈式查詢語法，讓您可以精準地獲取並監聽符合條件的資料。
 
-**範例：操作特定 Schema**
+**範例：過濾與排序**
 
 ```typescript
-// 監聽 'tenant_a' schema 下的 'users' 資料表
-const tenantUsers = sdk.collection('users', 'tenant_a');
+const query = sdk.collection('products')
+  .where('price', '>', 100)
+  .where('status', '==', 'active')
+  .orderBy('createdAt', 'desc')
+  .limit(10);
 
-tenantUsers.onSnapshot(({ record: data }) => {
-  console.log('租戶 A 的使用者列表:', data);
+// onSnapshot 會自動套用上述過濾條件
+query.onSnapshot(({ record: data }) => {
+  console.log('符合條件的熱門產品:', data);
 });
-
-// 新增資料到指定 schema
-await tenantUsers.add({ name: 'Tenant User' });
 ```
+
+*   **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains` (關鍵字搜尋)。
+*   **即時過濾**：當資料庫發生異動時，SDK 會在客戶端自動判斷該變更是否符合您的查詢條件，並動態更新結果集。

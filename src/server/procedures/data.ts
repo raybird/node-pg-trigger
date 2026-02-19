@@ -2,11 +2,22 @@ import { z } from 'zod';
 import { router, procedure } from '../trpc';
 import { db } from '../lib/db';
 
+const FilterOperator = z.enum(['==', '>', '<', '>=', '<=', '!=', 'contains']);
+
 const TableInput = z.object({
   tableName: z.string().min(1),
   schemaName: z.string().optional().default('public'),
   limit: z.number().optional().default(100),
   offset: z.number().optional().default(0),
+  where: z.array(z.object({
+    field: z.string(),
+    operator: FilterOperator,
+    value: z.any()
+  })).optional(),
+  orderBy: z.array(z.object({
+    field: z.string(),
+    direction: z.enum(['asc', 'desc']).default('asc')
+  })).optional()
 });
 
 const DocInput = z.object({
@@ -26,20 +37,78 @@ const UpdateInput = DocInput.extend({
   record: z.record(z.any()),
 });
 
+/**
+ * 輔助函式：構建 SQL WHERE 子句
+ */
+function buildWhereClause(where: any[] | undefined, startParamIndex: number) {
+  if (!where || where.length === 0) return { clause: '', params: [] };
+
+  const params: any[] = [];
+  const parts = where.map((filter, index) => {
+    const placeholder = `$${startParamIndex + index}`;
+    let operator = '=';
+    let value = filter.value;
+
+    switch (filter.operator) {
+      case '==': operator = '='; break;
+      case '!=': operator = '!='; break;
+      case '>': operator = '>'; break;
+      case '<': operator = '<'; break;
+      case '>=': operator = '>='; break;
+      case '<=': operator = '<='; break;
+      case 'contains': 
+        operator = 'LIKE'; 
+        value = `%${value}%`;
+        break;
+    }
+
+    params.push(value);
+    return `"${filter.field}" ${operator} ${placeholder}`;
+  });
+
+  return {
+    clause: `WHERE ${parts.join(' AND ')}`,
+    params
+  };
+}
+
+/**
+ * 輔助函式：構建 SQL ORDER BY 子句
+ */
+function buildOrderByClause(orderBy: any[] | undefined) {
+  if (!orderBy || orderBy.length === 0) return '';
+  const parts = orderBy.map(item => `"${item.field}" ${item.direction.toUpperCase()}`);
+  return `ORDER BY ${parts.join(', ')}`;
+}
+
 export const dataRouter = router({
   /**
-   * Query: 獲取資料表中的所有資料
+   * Query: 獲取資料表中的資料（支援過濾與排序）
    */
   list: procedure
     .input(TableInput)
     .query(async ({ input, ctx }) => {
-      const { tableName, schemaName, limit, offset } = input;
-      const sql = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT $1 OFFSET $2;`;
+      const { tableName, schemaName, limit, offset, where, orderBy } = input;
       
+      const { clause: whereClause, params: whereParams } = buildWhereClause(where, 1);
+      const orderByClause = buildOrderByClause(orderBy);
+      
+      const limitParamIndex = whereParams.length + 1;
+      const offsetParamIndex = whereParams.length + 2;
+      
+      const sql = `
+        SELECT * FROM "${schemaName}"."${tableName}" 
+        ${whereClause} 
+        ${orderByClause} 
+        LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex};
+      `;
+      
+      const allParams = [...whereParams, limit, offset];
+
       if (ctx.user) {
         const udb = await db.withUser(ctx.user.id);
         try {
-          const result = await udb.query(sql, [limit, offset]);
+          const result = await udb.query(sql, allParams);
           await udb.commit();
           return result.rows;
         } catch (error: any) {
@@ -50,7 +119,7 @@ export const dataRouter = router({
         }
       }
 
-      const result = await db.query(sql, [limit, offset]);
+      const result = await db.query(sql, allParams);
       return result.rows;
     }),
 

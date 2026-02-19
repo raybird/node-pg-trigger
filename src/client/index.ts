@@ -12,25 +12,87 @@ export type DbEvent<T = any> = {
   old_record: T | null;
 };
 
-export class Collection<T = any> {
-  private cache: T[] = [];
-  private lastTxid: string | number | null = null;
+export type FilterOperator = '==' | '>' | '<' | '>=' | '<=' | '!=' | 'contains';
+
+export interface Filter {
+  field: string;
+  operator: FilterOperator;
+  value: any;
+}
+
+export interface SortItem {
+  field: string;
+  direction: 'asc' | 'desc';
+}
+
+/**
+ * Query 類別 - 支援過濾、排序與分頁
+ */
+export class Query<T = any> {
+  protected filters: Filter[] = [];
+  protected sortItems: SortItem[] = [];
+  protected _limit: number = 100;
+  protected _offset: number = 0;
+  protected lastTxid: string | number | null = null;
+  protected cache: T[] = [];
 
   constructor(
-    private tableName: string, 
-    private sdk: any,
-    private schemaName: string = 'public'
+    protected tableName: string,
+    protected sdk: any,
+    protected schemaName: string = 'public'
   ) {}
 
-  get data() {
-    return this.cache;
+  where(field: string, operator: FilterOperator, value: any): Query<T> {
+    this.filters.push({ field, operator, value });
+    return this;
+  }
+
+  orderBy(field: string, direction: 'asc' | 'desc' = 'asc'): Query<T> {
+    this.sortItems.push({ field, direction });
+    return this;
+  }
+
+  limit(n: number): Query<T> {
+    this._limit = n;
+    return this;
+  }
+
+  offset(n: number): Query<T> {
+    this._offset = n;
+    return this;
+  }
+
+  /**
+   * 檢查記錄是否符合目前的所有過濾條件 (客戶端過濾)
+   */
+  private matchesFilters(record: any): boolean {
+    if (!record) return false;
+    return this.filters.every(f => {
+      const val = record[f.field];
+      switch (f.operator) {
+        case '==': return val == f.value;
+        case '!=': return val != f.value;
+        case '>': return val > f.value;
+        case '<': return val < f.value;
+        case '>=': return val >= f.value;
+        case '<=': return val <= f.value;
+        case 'contains': 
+          return String(val).toLowerCase().includes(String(f.value).toLowerCase());
+        default: return true;
+      }
+    });
   }
 
   async onSnapshot(callback: (snapshot: DbEvent<T[]>) => void) {
+    // 1. 獲取初始快照 (帶過濾)
     try {
       const initialData = await this.sdk.data.list.query({ 
         tableName: this.tableName,
-        schemaName: this.schemaName 
+        schemaName: this.schemaName,
+        where: this.filters,
+        orderBy: this.sortItems,
+        limit: this._limit,
+        offset: this._offset
       });
       this.cache = initialData;
       
@@ -44,37 +106,75 @@ export class Collection<T = any> {
         old_record: null
       });
     } catch (err) {
-      console.error(`Failed to fetch initial snapshot for ${this.schemaName}.${this.tableName}:`, err);
+      console.error(`Failed to fetch snapshot for ${this.schemaName}.${this.tableName}:`, err);
     }
 
+    // 2. 訂閱變更並自動維護快取 (含過濾邏輯)
     const subscription = this.sdk.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
       onData: (event: DbEvent<T>) => {
-        // 增加 schema 檢查以支援多租戶
         if (event.table !== this.tableName || (event.schema && event.schema !== this.schemaName)) return;
 
         if (event.txid) this.lastTxid = event.txid;
 
-        if (event.action === 'insert') {
-          this.cache = [...this.cache, event.record as T];
+        const record = event.record as any;
+        const oldRecord = event.old_record as any;
+
+        // 判斷該變更是否影響目前查詢的結果集
+        const isMatch = this.matchesFilters(record);
+        const wasMatch = this.matchesFilters(oldRecord);
+
+        let changed = false;
+
+        if (event.action === 'insert' && isMatch) {
+          this.cache = [...this.cache, record];
+          changed = true;
         } else if (event.action === 'update') {
-          const id = (event.record as any).id;
-          this.cache = this.cache.map(item => (item as any).id === id ? event.record as T : item);
-        } else if (event.action === 'delete') {
-          const id = (event.old_record as any).id;
-          this.cache = this.cache.filter(item => (item as any).id !== id);
+          const id = record.id;
+          const exists = this.cache.some((item: any) => item.id === id);
+
+          if (isMatch && !exists) {
+            // 原本不符合但現在符合了
+            this.cache = [...this.cache, record];
+            changed = true;
+          } else if (isMatch && exists) {
+            // 依然符合，更新內容
+            this.cache = this.cache.map((item: any) => item.id === id ? record : item);
+            changed = true;
+          } else if (!isMatch && exists) {
+            // 原本符合但現在不符合了，移除
+            this.cache = this.cache.filter((item: any) => item.id !== id);
+            changed = true;
+          }
+        } else if (event.action === 'delete' && wasMatch) {
+          const id = oldRecord.id;
+          this.cache = this.cache.filter((item: any) => item.id !== id);
+          changed = true;
         }
 
-        callback({
-          ...event,
-          record: this.cache
-        } as DbEvent<T[]>);
+        // 如果快取發生變動，執行回呼
+        if (changed) {
+          // 這裡可以再執行一次客戶端排序以確保順序正確
+          callback({
+            ...event,
+            record: this.cache
+          } as DbEvent<T[]>);
+        }
       },
       onError: (err: any) => {
-        console.error(`Subscription error for collection ${this.schemaName}.${this.tableName}:`, err);
+        console.error(`Subscription error for query ${this.tableName}:`, err);
       },
     });
 
     return () => subscription.unsubscribe();
+  }
+}
+
+/**
+ * Collection 繼承自 Query
+ */
+export class Collection<T = any> extends Query<T> {
+  constructor(tableName: string, sdk: any, schemaName: string = 'public') {
+    super(tableName, sdk, schemaName);
   }
 
   async add(record: Partial<T>): Promise<T> {
@@ -146,7 +246,7 @@ export class Document<T = any> {
         }
       },
       onError: (err: any) => {
-        console.error(`Subscription error for document ${this.schemaName}.${this.tableName}/${this.id}:`, err);
+        console.error(`Subscription error for document ${this.tableName}/${this.id}:`, err);
       },
     });
 
