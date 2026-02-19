@@ -21,6 +21,8 @@ const FilterOperator = zod_1.z.enum([
     "<=",
     "!=",
     "contains",
+    "array-contains",
+    "array-contains-any",
     "in",
     "not-in",
 ]);
@@ -112,6 +114,12 @@ function buildWhereClause(where, startParamIndex) {
                 operator = "LIKE";
                 value = `%${value}%`;
                 break;
+            case "array-contains":
+                params.push(value);
+                return `to_jsonb("${filter.field}") @> jsonb_build_array(${placeholder})`;
+            case "array-contains-any":
+                params.push((Array.isArray(value) ? value : [value]).map(String));
+                return `EXISTS (SELECT 1 FROM jsonb_array_elements_text(to_jsonb("${filter.field}")) AS e(v) WHERE e.v = ANY(${placeholder}))`;
         }
         params.push(value);
         return `"${filter.field}" ${operator} ${placeholder}`;

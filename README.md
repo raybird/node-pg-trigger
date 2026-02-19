@@ -216,7 +216,23 @@ const importantUsers = sdk
 importantUsers.onSnapshot(({ record: users }) => {
   console.log("可操作後台的使用者:", users);
 });
+
+const urgentProjects = sdk
+  .collection("projects")
+  .where("tags", "array-contains", "urgent");
+
+urgentProjects.onSnapshot(({ record: projects }) => {
+  console.log("含 urgent 標籤的專案:", projects);
+});
+
+const focusProjects = sdk
+  .collection("projects")
+  .where("tags", "array-contains-any", ["urgent", "p1", "hotfix"]);
+
+focusProjects.onSnapshot(({ record: projects }) => {
+  console.log("命中任一重點標籤的專案:", projects);
+});
 ```
 
-- **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `in`, `not-in`。
+- **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `in`, `not-in`, `array-contains`, `array-contains-any`。
 - **即時過濾**：當資料庫發生異動時，SDK 會在客戶端自動判斷該變更是否符合您的查詢條件，並動態更新結果集。

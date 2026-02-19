@@ -25,6 +25,8 @@ export type FilterOperator =
   | "<="
   | "!="
   | "contains"
+  | "array-contains"
+  | "array-contains-any"
   | "in"
   | "not-in";
 
@@ -153,6 +155,14 @@ export class Query<T = any> {
           return String(val)
             .toLowerCase()
             .includes(String(f.value).toLowerCase());
+        case "array-contains":
+          return Array.isArray(val)
+            ? val.some((item) => item == f.value)
+            : false;
+        case "array-contains-any":
+          return Array.isArray(val)
+            ? val.some((item) => options.some((option) => option == item))
+            : false;
         default:
           return true;
       }

@@ -27,6 +27,7 @@
   - [x] Server 端支援動態 SQL 過濾條件生成。
   - [x] Client 端支援實時事件的條件匹配 (Event Filtering)。
   - [x] 補齊 Firestore 風格集合運算子 `in` / `not-in`。
+  - [x] 補齊 Firestore 風格陣列運算子 `array-contains` / `array-contains-any`。
 - [x] **伺服器端原子操作 (FieldValue)**：
   - [x] 實作 `FieldValue.serverTimestamp()`。
   - [x] 實作 `FieldValue.increment(n)` 原子增量。
@@ -55,6 +56,12 @@
   - [x] SDK 支援 `collection('table', 'schema')` 指定命名空間。
 - [ ] **中介層優化**：
   - 引入 Redis 作為事件總線 (Event Bus)，以支援水平擴展的後端節點。
+- [ ] **關聯語意 DSL v0.2 規格化**：
+  - 定義關聯範圍：先支援 `1:1`、`1:N`，`N:N` 僅限透過中介表展開（或先行限制）。
+  - 定義 `subscribe` 查詢中的 `where + relation + payload mode`。
+  - 明確關聯觸發語意（主表變更連帶重算、關聯表變更回推主訂閱）。
+  - 設定 payload 邊界（主體 diff、可選展開、二段拉取）。
+  - 納入效能與一致性原則（transaction 邊界送事件、FK/index 檢查、fan-out 上限）。
 
 ---
 
