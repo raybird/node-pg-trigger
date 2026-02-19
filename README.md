@@ -66,6 +66,8 @@ npm start
 
 `onSnapshot` 會首先發出一個 `action: 'initial'` 事件，包含目前的完整資料，隨後每次資料庫變更時，SDK 都會自動更新本地快取，並將 **最新的完整資料集** 傳送給回呼函式。
 
+若您只想拿資料本身（不需要 `action/txid` 中繼資訊），可改用 `valueChanges`；若偏好 Rx/訂閱語意命名，也可用 `subscribe`（等價於 `onSnapshot`）。
+
 ```typescript
 import { createSdk } from "pg-trigger-manager/client";
 
@@ -75,6 +77,11 @@ const sdk = createSdk("http://localhost:5000");
 sdk.collection("users").onSnapshot(({ action, record: data }) => {
   console.log(`[${action}] 目前所有使用者:`, data);
   // 直接用 data 來渲染 UI，無需手動合併 insert/update/delete 事件
+});
+
+// valueChanges: 只取得資料本體
+sdk.collection("users").valueChanges((data) => {
+  console.log("目前所有使用者(valueChanges):", data);
 });
 ```
 
@@ -88,6 +95,11 @@ sdk.doc("users", 1).onSnapshot(({ action, record: user }) => {
   } else {
     console.log("使用者最新資料:", user);
   }
+});
+
+// subscribe: onSnapshot 的命名別名
+sdk.doc("users", 1).subscribe(({ action, record: user }) => {
+  console.log("document 變更:", action, user);
 });
 ```
 

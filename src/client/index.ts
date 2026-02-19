@@ -266,6 +266,16 @@ export class Query<T = any> {
     return () => subscription.unsubscribe();
   }
 
+  async valueChanges(callback: (records: T[]) => void) {
+    return this.onSnapshot(({ record }) => {
+      callback(record as T[]);
+    });
+  }
+
+  async subscribe(callback: (snapshot: DbEvent<T[]>) => void) {
+    return this.onSnapshot(callback);
+  }
+
   async get(): Promise<T[]> {
     const rows = await this.sdk.data.list.query({
       tableName: this.tableName,
@@ -386,6 +396,16 @@ export class Document<T = any> {
     );
 
     return () => subscription.unsubscribe();
+  }
+
+  async valueChanges(callback: (record: T | null) => void) {
+    return this.onSnapshot(({ record }) => {
+      callback(record as T | null);
+    });
+  }
+
+  async subscribe(callback: (snapshot: DbEvent<T | null>) => void) {
+    return this.onSnapshot(callback);
   }
 
   async update(record: Partial<T>): Promise<T | null> {

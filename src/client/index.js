@@ -200,6 +200,18 @@ class Query {
             return () => subscription.unsubscribe();
         });
     }
+    valueChanges(callback) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return this.onSnapshot(({ record }) => {
+                callback(record);
+            });
+        });
+    }
+    subscribe(callback) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return this.onSnapshot(callback);
+        });
+    }
     get() {
         return __awaiter(this, void 0, void 0, function* () {
             const rows = yield this.sdk.data.list.query({
@@ -296,6 +308,18 @@ class Document {
                 },
             });
             return () => subscription.unsubscribe();
+        });
+    }
+    valueChanges(callback) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return this.onSnapshot(({ record }) => {
+                callback(record);
+            });
+        });
+    }
+    subscribe(callback) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return this.onSnapshot(callback);
         });
     }
     update(record) {
