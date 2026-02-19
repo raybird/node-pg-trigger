@@ -37,6 +37,17 @@ const UpdateInput = DocInput.extend({
   record: z.record(z.any()),
 });
 
+const BatchInput = z.object({
+  operations: z.array(z.object({
+    type: z.enum(['set', 'update', 'delete']),
+    tableName: z.string(),
+    schemaName: z.string().optional().default('public'),
+    id: z.any().optional(),
+    idField: z.string().optional().default('id'),
+    record: z.record(z.any()).optional()
+  }))
+});
+
 /**
  * 輔助函式：構建 SQL WHERE 子句
  */
@@ -93,8 +104,22 @@ function prepareWrite(record: Record<string, any>, startParamIndex: number) {
   keys.forEach(key => {
     const val = record[key];
     // 檢查是否為 FieldValue 哨兵值 (考慮 JSON 序列化後的格式)
-    if (val && typeof val === 'object' && val.type === 'SERVER_TIMESTAMP' && val._isFieldValue) {
-      sqlValues.push('now()');
+    if (val && typeof val === 'object' && val._isFieldValue) {
+      if (val.type === 'SERVER_TIMESTAMP') {
+        sqlValues.push('now()');
+      } else if (val.type === 'INCREMENT') {
+        sqlValues.push(`$${currentIndex}`);
+        params.push(val.value);
+        currentIndex++;
+      } else if (val.type === 'DELETE_FIELD') {
+        sqlValues.push('NULL');
+      } else if (val.type === 'ARRAY_UNION') {
+        sqlValues.push(`ARRAY(SELECT DISTINCT x FROM unnest($${currentIndex}) x)`);
+        params.push(val.value);
+        currentIndex++;
+      } else if (val.type === 'ARRAY_REMOVE') {
+        sqlValues.push("'{}'");
+      }
     } else {
       sqlValues.push(`$${currentIndex}`);
       params.push(val);
@@ -120,8 +145,26 @@ function prepareUpdate(record: Record<string, any>, startParamIndex: number) {
 
   keys.forEach(key => {
     const val = record[key];
-    if (val && typeof val === 'object' && val.type === 'SERVER_TIMESTAMP' && val._isFieldValue) {
-      setParts.push(`"${key}" = now()`);
+    if (val && typeof val === 'object' && val._isFieldValue) {
+      if (val.type === 'SERVER_TIMESTAMP') {
+        setParts.push(`"${key}" = now()`);
+      } else if (val.type === 'INCREMENT') {
+        setParts.push(`"${key}" = "${key}" + $${currentIndex}`);
+        params.push(val.value);
+        currentIndex++;
+      } else if (val.type === 'DELETE_FIELD') {
+        setParts.push(`"${key}" = NULL`);
+      } else if (val.type === 'ARRAY_UNION') {
+        // 使用 UNION 確保元素唯一性
+        setParts.push(`"${key}" = ARRAY(SELECT x FROM unnest(COALESCE("${key}", '{}')) x UNION SELECT x FROM unnest($${currentIndex}) x)`);
+        params.push(val.value);
+        currentIndex++;
+      } else if (val.type === 'ARRAY_REMOVE') {
+        // 過濾掉指定的元素
+        setParts.push(`"${key}" = ARRAY(SELECT x FROM unnest("${key}") x WHERE x <> ALL($${currentIndex}))`);
+        params.push(val.value);
+        currentIndex++;
+      }
     } else {
       setParts.push(`"${key}" = $${currentIndex}`);
       params.push(val);
@@ -290,5 +333,39 @@ export const dataRouter = router({
 
       const result = await db.query(sql, [id]);
       return result.rows[0] || null;
+    }),
+
+  /**
+   * Mutation: 批量異動 (Atomicity Batch)
+   */
+  batch: procedure
+    .input(BatchInput)
+    .mutation(async ({ input, ctx }) => {
+      const udb = await db.withUser(ctx.user?.id || 'system');
+      
+      try {
+        for (const op of input.operations) {
+          if (op.type === 'set' || (op.type === 'update' && !op.id)) {
+            // 注意：這裡簡化處理，set 如果沒 id 則視為 insert
+            const { columns, placeholders, params } = prepareWrite(op.record || {}, 1);
+            const sql = `INSERT INTO "${op.schemaName}"."${op.tableName}" (${columns}) VALUES (${placeholders});`;
+            await udb.query(sql, params);
+          } else if (op.type === 'update' && op.id) {
+            const { setClause, params, lastIndex } = prepareUpdate(op.record || {}, 1);
+            const sql = `UPDATE "${op.schemaName}"."${op.tableName}" SET ${setClause} WHERE "${op.idField}" = $${lastIndex};`;
+            await udb.query(sql, [...params, op.id]);
+          } else if (op.type === 'delete' && op.id) {
+            const sql = `DELETE FROM "${op.schemaName}"."${op.tableName}" WHERE "${op.idField}" = $1;`;
+            await udb.query(sql, [op.id]);
+          }
+        }
+        await udb.commit();
+        return { success: true, count: input.operations.length };
+      } catch (error: any) {
+        await udb.rollback();
+        throw new Error(`Batch Transaction Failed: ${error.message}`);
+      } finally {
+        udb.release();
+      }
     }),
 });

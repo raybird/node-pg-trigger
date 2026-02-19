@@ -29,14 +29,33 @@ export interface SortItem {
  * FieldValue - 支援特殊伺服器端值的處理
  */
 export class FieldValue {
-  private constructor(public readonly type: string) {}
+  private constructor(
+    public readonly type: 'SERVER_TIMESTAMP' | 'INCREMENT' | 'DELETE_FIELD' | 'ARRAY_UNION' | 'ARRAY_REMOVE',
+    public readonly value?: any
+  ) {}
 
   static serverTimestamp() {
     return new FieldValue('SERVER_TIMESTAMP');
   }
 
+  static increment(n: number) {
+    return new FieldValue('INCREMENT', n);
+  }
+
+  static delete() {
+    return new FieldValue('DELETE_FIELD');
+  }
+
+  static arrayUnion(...elements: any[]) {
+    return new FieldValue('ARRAY_UNION', elements);
+  }
+
+  static arrayRemove(...elements: any[]) {
+    return new FieldValue('ARRAY_REMOVE', elements);
+  }
+
   static isFieldValue(val: any): val is FieldValue {
-    return val instanceof FieldValue || (val && val._isFieldValue === true);
+    return val && val._isFieldValue === true;
   }
 
   // 為了跨環境傳輸時保持型別資訊
@@ -291,6 +310,56 @@ export class Document<T = any> {
   }
 }
 
+/**
+ * WriteBatch - 批量寫入支援
+ */
+export class WriteBatch {
+  private operations: any[] = [];
+
+  constructor(private sdk: any) {}
+
+  set<T = any>(doc: Document<T>, record: Partial<T>): WriteBatch {
+    this.operations.push({
+      type: 'set',
+      tableName: (doc as any).tableName,
+      schemaName: (doc as any).schemaName,
+      id: (doc as any).id,
+      idField: (doc as any).idField,
+      record
+    });
+    return this;
+  }
+
+  update<T = any>(doc: Document<T>, record: Partial<T>): WriteBatch {
+    this.operations.push({
+      type: 'update',
+      tableName: (doc as any).tableName,
+      schemaName: (doc as any).schemaName,
+      id: (doc as any).id,
+      idField: (doc as any).idField,
+      record
+    });
+    return this;
+  }
+
+  delete(doc: Document): WriteBatch {
+    this.operations.push({
+      type: 'delete',
+      tableName: (doc as any).tableName,
+      schemaName: (doc as any).schemaName,
+      id: (doc as any).id,
+      idField: (doc as any).idField
+    });
+    return this;
+  }
+
+  async commit(): Promise<void> {
+    if (this.operations.length === 0) return;
+    await this.sdk.data.batch.mutate({ operations: this.operations });
+    this.operations = [];
+  }
+}
+
 export class VanillaFirestore {
   private trpc: any;
   private userId: string | null = null;
@@ -352,6 +421,10 @@ export class VanillaFirestore {
     this.userId = null;
     this.initTrpc();
     return this;
+  }
+
+  batch() {
+    return new WriteBatch(this.trpc);
   }
 
   collection<T = any>(name: string, schema: string = 'public') {

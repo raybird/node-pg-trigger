@@ -107,16 +107,52 @@ await aliceDoc.update({ name: 'Alice Smith' });
 await aliceDoc.delete();
 ```
 
-**範例：使用伺服器時間戳記 (Server Timestamp)**
+**範例：使用伺服器特殊值 (FieldValue)**
+
+SDK 支援多種伺服器端原子操作，確保資料的一致性與效能。
 
 ```typescript
 import { FieldValue } from 'pg-trigger-manager/client';
 
-// 新增文章並自動設定建立時間 (使用 PG now())
+// 1. 伺服器時間戳記
 await sdk.collection('posts').add({
   title: 'Hello Vanilla',
   createdAt: FieldValue.serverTimestamp()
 });
+
+// 2. 原子增量 (Increment) - 適用於點擊數、庫存等
+await sdk.doc('products', 123).update({
+  viewCount: FieldValue.increment(1)
+});
+
+// 3. 陣列操作 (Array Union/Remove) - 自動處理重複元素
+await sdk.doc('users', 'raybird').update({
+  tags: FieldValue.arrayUnion('developer', 'ai'),
+  roles: FieldValue.arrayRemove('guest')
+});
+
+// 4. 刪除欄位 (Delete)
+await sdk.doc('users', 'raybird').update({
+  temporaryToken: FieldValue.delete()
+});
+```
+
+**範例：批量寫入 (Write Batches)**
+
+批量寫入允許您在單一原子性交易中執行多個操作，確保所有異動「全部成功，或全部不執行」。
+
+```typescript
+const batch = sdk.batch();
+
+const userRef = sdk.doc('users', 'raybird');
+const profileRef = sdk.doc('profiles', 'raybird');
+
+// 打包多個異動
+batch.update(userRef, { lastSeen: FieldValue.serverTimestamp() });
+batch.update(profileRef, { points: FieldValue.increment(10) });
+
+// 一次性送出並執行交易
+await batch.commit();
 ```
 
 ### 可靠性與追補機制

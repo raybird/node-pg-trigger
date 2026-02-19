@@ -23,9 +23,14 @@
     - [x] 實作 `where()`, `orderBy()`, `limit()` 鏈式語法。
     - [x] Server 端支援動態 SQL 過濾條件生成。
     - [x] Client 端支援實時事件的條件匹配 (Event Filtering)。
-- [x] **伺服器端時間戳記 (Server Timestamp)**：
-    - [x] 實作 `FieldValue.serverTimestamp()` 哨兵值。
-    - [x] 後端自動將其替換為 SQL `now()` 函式。
+- [x] **伺服器端原子操作 (FieldValue)**：
+    - [x] 實作 `FieldValue.serverTimestamp()`。
+    - [x] 實作 `FieldValue.increment(n)` 原子增量。
+    - [x] 實作 `FieldValue.delete()` 欄位刪除。
+    - [x] 實作 `FieldValue.arrayUnion()` 與 `FieldValue.arrayRemove()`。
+- [x] **批量寫入 (Write Batches)**：
+    - [x] 實作 `sdk.batch()` 介面。
+    - [x] 支援將多個異動封裝在單一原子交易中執行。
 
 ## 🔒 階段二：安全性與可靠性 (Completed)
 - [x] **連線恢復機制**：
