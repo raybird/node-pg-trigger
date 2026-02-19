@@ -1,15 +1,19 @@
-# 📋 任務清單：批量寫入 (Write Batches)
+# 📋 任務清單：Firestore-like in / not-in 查詢支援
 
 ## 🎯 目標
-實作原子性的多重資料異動功能。
+
+補齊 Firestore 常用的集合查詢語法，讓 SDK 在條件表達上更貼近 `onSnapshot + where` 的真實開發場景。
 
 ## 🛠 任務分解
-- [x] **Phase 1: 客戶端 Batch 類別實作**
-    - [x] 實作 `WriteBatch` 類別及其 `set/update/delete` 方法。
-    - [x] 在 `VanillaFirestore` 註冊 `batch()` 方法。
-- [x] **Phase 2: 後端 Batch Procedure 開發**
-    - [x] 在 `dataRouter` 中實作 `batch` 處理程序。
-    - [x] 實作 SQL Transaction 包裹與循環解析指令邏輯。
-- [x] **Phase 3: 教學與文件**
-    - [x] 更新 `README.md` 並提供範例代碼。
-    - [x] 更新 `ROADMAP.md`。
+
+- [x] **Phase 1: SDK 條件語法擴充**
+  - [x] 擴充 `FilterOperator`，新增 `in` 與 `not-in`。
+  - [x] 更新客戶端 `matchesFilters` 快取比對邏輯。
+- [x] **Phase 2: Server SQL 轉譯**
+  - [x] 更新 Zod 驗證，允許 `in` / `not-in`。
+  - [x] 在 `buildWhereClause` 新增 `ANY(...)` 參數化查詢映射。
+- [x] **Phase 3: 文件與決策同步**
+  - [x] 更新 `README.md` 查詢範例與運算子列表。
+  - [x] 新增 `docs/firestore-query-operators.md` 使用說明。
+  - [x] 建立 ADR：`docs/decisions/0065-firestore-in-not-in-operators.md`。
+  - [x] 更新 `ROADMAP.md` 進度紀錄。

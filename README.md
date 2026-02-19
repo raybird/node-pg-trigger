@@ -4,10 +4,10 @@
 
 ## ✨ 核心功能
 
-*   **🚀 即時事件廣播**: 使用 PostgreSQL 原生的 `LISTEN`/`NOTIFY` 機制，結合 tRPC Subscriptions，實現低延遲的事件推送。
-*   **🔒 端到端型別安全**: 整個 API 層由 tRPC 構建，從後端到前端 SDK，享受完整的靜態型別檢查和自動完成，大幅減少執行時錯誤。
-*   **🎛️ 動態觸發器管理**: 提供簡單易用的 tRPC API，讓您可以透過程式碼動態地為任何資料表建立、查詢和刪除事件通知觸發器。
-*   **📦 前端 SDK**: 提供一個具備 Firestore 風格的 tRPC Client SDK，讓前端應用可以輕鬆整合。
+- **🚀 即時事件廣播**: 使用 PostgreSQL 原生的 `LISTEN`/`NOTIFY` 機制，結合 tRPC Subscriptions，實現低延遲的事件推送。
+- **🔒 端到端型別安全**: 整個 API 層由 tRPC 構建，從後端到前端 SDK，享受完整的靜態型別檢查和自動完成，大幅減少執行時錯誤。
+- **🎛️ 動態觸發器管理**: 提供簡單易用的 tRPC API，讓您可以透過程式碼動態地為任何資料表建立、查詢和刪除事件通知觸發器。
+- **📦 前端 SDK**: 提供一個具備 Firestore 風格的 tRPC Client SDK，讓前端應用可以輕鬆整合。
 
 ## 🚀 快速開始
 
@@ -67,12 +67,12 @@ npm start
 `onSnapshot` 會首先發出一個 `action: 'initial'` 事件，包含目前的完整資料，隨後每次資料庫變更時，SDK 都會自動更新本地快取，並將 **最新的完整資料集** 傳送給回呼函式。
 
 ```typescript
-import { createSdk } from 'pg-trigger-manager/client';
+import { createSdk } from "pg-trigger-manager/client";
 
-const sdk = createSdk('http://localhost:5000');
+const sdk = createSdk("http://localhost:5000");
 
 // 'data' 始終是該資料表的最新完整列表
-sdk.collection('users').onSnapshot(({ action, record: data }) => {
+sdk.collection("users").onSnapshot(({ action, record: data }) => {
   console.log(`[${action}] 目前所有使用者:`, data);
   // 直接用 data 來渲染 UI，無需手動合併 insert/update/delete 事件
 });
@@ -82,11 +82,11 @@ sdk.collection('users').onSnapshot(({ action, record: data }) => {
 
 ```typescript
 // 獲取並訂閱 ID 為 1 的使用者
-sdk.doc('users', 1).onSnapshot(({ action, record: user }) => {
-  if (action === 'delete') {
-    console.log('使用者已刪除');
+sdk.doc("users", 1).onSnapshot(({ action, record: user }) => {
+  if (action === "delete") {
+    console.log("使用者已刪除");
   } else {
-    console.log('使用者最新資料:', user);
+    console.log("使用者最新資料:", user);
   }
 });
 ```
@@ -94,14 +94,14 @@ sdk.doc('users', 1).onSnapshot(({ action, record: user }) => {
 **範例：新增、更新與刪除資料**
 
 ```typescript
-const users = sdk.collection('users');
+const users = sdk.collection("users");
 
 // 新增資料
-await users.add({ name: 'Alice', email: 'alice@example.com' });
+await users.add({ name: "Alice", email: "alice@example.com" });
 
 // 更新單筆資料
-const aliceDoc = sdk.doc('users', 1);
-await aliceDoc.update({ name: 'Alice Smith' });
+const aliceDoc = sdk.doc("users", 1);
+await aliceDoc.update({ name: "Alice Smith" });
 
 // 刪除資料
 await aliceDoc.delete();
@@ -112,28 +112,28 @@ await aliceDoc.delete();
 SDK 支援多種伺服器端原子操作，確保資料的一致性與效能。
 
 ```typescript
-import { FieldValue } from 'pg-trigger-manager/client';
+import { FieldValue } from "pg-trigger-manager/client";
 
 // 1. 伺服器時間戳記
-await sdk.collection('posts').add({
-  title: 'Hello Vanilla',
-  createdAt: FieldValue.serverTimestamp()
+await sdk.collection("posts").add({
+  title: "Hello Vanilla",
+  createdAt: FieldValue.serverTimestamp(),
 });
 
 // 2. 原子增量 (Increment) - 適用於點擊數、庫存等
-await sdk.doc('products', 123).update({
-  viewCount: FieldValue.increment(1)
+await sdk.doc("products", 123).update({
+  viewCount: FieldValue.increment(1),
 });
 
 // 3. 陣列操作 (Array Union/Remove) - 自動處理重複元素
-await sdk.doc('users', 'raybird').update({
-  tags: FieldValue.arrayUnion('developer', 'ai'),
-  roles: FieldValue.arrayRemove('guest')
+await sdk.doc("users", "raybird").update({
+  tags: FieldValue.arrayUnion("developer", "ai"),
+  roles: FieldValue.arrayRemove("guest"),
 });
 
 // 4. 刪除欄位 (Delete)
-await sdk.doc('users', 'raybird').update({
-  temporaryToken: FieldValue.delete()
+await sdk.doc("users", "raybird").update({
+  temporaryToken: FieldValue.delete(),
 });
 ```
 
@@ -144,8 +144,8 @@ await sdk.doc('users', 'raybird').update({
 ```typescript
 const batch = sdk.batch();
 
-const userRef = sdk.doc('users', 'raybird');
-const profileRef = sdk.doc('profiles', 'raybird');
+const userRef = sdk.doc("users", "raybird");
+const profileRef = sdk.doc("profiles", "raybird");
 
 // 打包多個異動
 batch.update(userRef, { lastSeen: FieldValue.serverTimestamp() });
@@ -159,9 +159,9 @@ await batch.commit();
 
 SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid) 與後端的 `audit_log` 機制，當您的應用程式重新連線時，SDK 會自動請求補發所有遺漏的異動事件。
 
-*   **自動追補**：斷線重連後，SDK 會自動從最後接收到的事件點開始追補。
-*   **資料一致性**：確保前端快取與資料庫狀態始終維持高度同步。
-*   **效能優化**：追補查詢經過索引優化，僅撈取必要的差異數據。
+- **自動追補**：斷線重連後，SDK 會自動從最後接收到的事件點開始追補。
+- **資料一致性**：確保前端快取與資料庫狀態始終維持高度同步。
+- **效能優化**：追補查詢經過索引優化，僅撈取必要的差異數據。
 
 ### 進階查詢支援
 
@@ -170,17 +170,31 @@ SDK 支援類似 Firestore 的鏈式查詢語法，讓您可以精準地獲取�
 **範例：過濾與排序**
 
 ```typescript
-const query = sdk.collection('products')
-  .where('price', '>', 100)
-  .where('status', '==', 'active')
-  .orderBy('createdAt', 'desc')
+const query = sdk
+  .collection("products")
+  .where("price", ">", 100)
+  .where("status", "==", "active")
+  .orderBy("createdAt", "desc")
   .limit(10);
 
 // onSnapshot 會自動套用上述過濾條件
 query.onSnapshot(({ record: data }) => {
-  console.log('符合條件的熱門產品:', data);
+  console.log("符合條件的熱門產品:", data);
 });
 ```
 
-*   **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains` (關鍵字搜尋)。
-*   **即時過濾**：當資料庫發生異動時，SDK 會在客戶端自動判斷該變更是否符合您的查詢條件，並動態更新結果集。
+**範例：Firestore 風格集合條件 (`in` / `not-in`)**
+
+```typescript
+const importantUsers = sdk
+  .collection("users")
+  .where("role", "in", ["admin", "editor"])
+  .where("status", "not-in", ["blocked", "deleted"]);
+
+importantUsers.onSnapshot(({ record: users }) => {
+  console.log("可操作後台的使用者:", users);
+});
+```
+
+- **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `in`, `not-in`。
+- **即時過濾**：當資料庫發生異動時，SDK 會在客戶端自動判斷該變更是否符合您的查詢條件，並動態更新結果集。
