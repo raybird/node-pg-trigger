@@ -16,7 +16,11 @@ export class Collection<T = any> {
   private cache: T[] = [];
   private lastTxid: string | number | null = null;
 
-  constructor(private tableName: string, private sdk: any) {}
+  constructor(
+    private tableName: string, 
+    private sdk: any,
+    private schemaName: string = 'public'
+  ) {}
 
   get data() {
     return this.cache;
@@ -24,27 +28,30 @@ export class Collection<T = any> {
 
   async onSnapshot(callback: (snapshot: DbEvent<T[]>) => void) {
     try {
-      const initialData = await this.sdk.data.list.query({ tableName: this.tableName });
+      const initialData = await this.sdk.data.list.query({ 
+        tableName: this.tableName,
+        schemaName: this.schemaName 
+      });
       this.cache = initialData;
       
       callback({
         timestamp: new Date().toISOString(),
         txid: 0,
         action: 'initial',
-        schema: 'public',
+        schema: this.schemaName,
         table: this.tableName,
         record: this.cache,
         old_record: null
       });
     } catch (err) {
-      console.error(`Failed to fetch initial snapshot for ${this.tableName}:`, err);
+      console.error(`Failed to fetch initial snapshot for ${this.schemaName}.${this.tableName}:`, err);
     }
 
     const subscription = this.sdk.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
       onData: (event: DbEvent<T>) => {
-        if (event.table !== this.tableName) return;
+        // 增加 schema 檢查以支援多租戶
+        if (event.table !== this.tableName || (event.schema && event.schema !== this.schemaName)) return;
 
-        // 紀錄最後 txid 以供下次追補
         if (event.txid) this.lastTxid = event.txid;
 
         if (event.action === 'insert') {
@@ -63,7 +70,7 @@ export class Collection<T = any> {
         } as DbEvent<T[]>);
       },
       onError: (err: any) => {
-        console.error(`Subscription error for collection ${this.tableName}:`, err);
+        console.error(`Subscription error for collection ${this.schemaName}.${this.tableName}:`, err);
       },
     });
 
@@ -71,7 +78,11 @@ export class Collection<T = any> {
   }
 
   async add(record: Partial<T>): Promise<T> {
-    return this.sdk.data.add.mutate({ tableName: this.tableName, record });
+    return this.sdk.data.add.mutate({ 
+      tableName: this.tableName, 
+      schemaName: this.schemaName,
+      record 
+    });
   }
 }
 
@@ -83,12 +94,14 @@ export class Document<T = any> {
     private tableName: string,
     private id: string | number,
     private sdk: any,
-    private idField: string = 'id'
+    private idField: string = 'id',
+    private schemaName: string = 'public'
   ) {}
 
   async get(): Promise<T | null> {
     return this.sdk.data.get.query({ 
       tableName: this.tableName, 
+      schemaName: this.schemaName,
       id: this.id, 
       idField: this.idField 
     });
@@ -103,20 +116,19 @@ export class Document<T = any> {
         timestamp: new Date().toISOString(),
         txid: 0,
         action: 'initial',
-        schema: 'public',
+        schema: this.schemaName,
         table: this.tableName,
         record: this.cache,
         old_record: null
       });
     } catch (err) {
-      console.error(`Failed to fetch initial document for ${this.tableName}/${this.id}:`, err);
+      console.error(`Failed to fetch initial document for ${this.schemaName}.${this.tableName}/${this.id}:`, err);
     }
 
     const subscription = this.sdk.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
       onData: (event: DbEvent<T>) => {
-        if (event.table !== this.tableName) return;
+        if (event.table !== this.tableName || (event.schema && event.schema !== this.schemaName)) return;
         
-        // 紀錄最後 txid
         if (event.txid) this.lastTxid = event.txid;
 
         const currentRecord = event.record as any;
@@ -134,7 +146,7 @@ export class Document<T = any> {
         }
       },
       onError: (err: any) => {
-        console.error(`Subscription error for document ${this.tableName}/${this.id}:`, err);
+        console.error(`Subscription error for document ${this.schemaName}.${this.tableName}/${this.id}:`, err);
       },
     });
 
@@ -144,6 +156,7 @@ export class Document<T = any> {
   async update(record: Partial<T>): Promise<T | null> {
     return this.sdk.data.update.mutate({ 
       tableName: this.tableName, 
+      schemaName: this.schemaName,
       id: this.id, 
       idField: this.idField, 
       record 
@@ -153,6 +166,7 @@ export class Document<T = any> {
   async delete(): Promise<T | null> {
     return this.sdk.data.delete.mutate({ 
       tableName: this.tableName, 
+      schemaName: this.schemaName,
       id: this.id, 
       idField: this.idField 
     });
@@ -210,31 +224,24 @@ export class VanillaFirestore {
     });
   }
 
-  /**
-   * 模擬登入
-   */
   auth(userId: string) {
     this.userId = userId;
-    // 重新初始化 trpc 以套用新的 headers (或確保 headers() 函式被正確調用)
     this.initTrpc();
     return this;
   }
 
-  /**
-   * 登出
-   */
   signOut() {
     this.userId = null;
     this.initTrpc();
     return this;
   }
 
-  collection<T = any>(name: string) {
-    return new Collection<T>(name, this.trpc);
+  collection<T = any>(name: string, schema: string = 'public') {
+    return new Collection<T>(name, this.trpc, schema);
   }
 
-  doc<T = any>(name: string, id: string | number, idField: string = 'id') {
-    return new Document<T>(name, id, this.trpc, idField);
+  doc<T = any>(name: string, id: string | number, idField: string = 'id', schema: string = 'public') {
+    return new Document<T>(name, id, this.trpc, idField, schema);
   }
 
   get client() {

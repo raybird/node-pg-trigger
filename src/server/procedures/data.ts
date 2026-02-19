@@ -4,18 +4,21 @@ import { db } from '../lib/db';
 
 const TableInput = z.object({
   tableName: z.string().min(1),
+  schemaName: z.string().optional().default('public'),
   limit: z.number().optional().default(100),
   offset: z.number().optional().default(0),
 });
 
 const DocInput = z.object({
   tableName: z.string().min(1),
+  schemaName: z.string().optional().default('public'),
   id: z.union([z.string(), z.number()]),
   idField: z.string().optional().default('id'),
 });
 
 const WriteInput = z.object({
   tableName: z.string().min(1),
+  schemaName: z.string().optional().default('public'),
   record: z.record(z.any()),
 });
 
@@ -30,8 +33,8 @@ export const dataRouter = router({
   list: procedure
     .input(TableInput)
     .query(async ({ input, ctx }) => {
-      const { tableName, limit, offset } = input;
-      const sql = `SELECT * FROM "${tableName}" LIMIT $1 OFFSET $2;`;
+      const { tableName, schemaName, limit, offset } = input;
+      const sql = `SELECT * FROM "${schemaName}"."${tableName}" LIMIT $1 OFFSET $2;`;
       
       if (ctx.user) {
         const udb = await db.withUser(ctx.user.id);
@@ -41,7 +44,7 @@ export const dataRouter = router({
           return result.rows;
         } catch (error: any) {
           await udb.rollback();
-          throw new Error(`RLS Fetch error for '${tableName}': ${error.message}`);
+          throw new Error(`RLS Fetch error for '${schemaName}.${tableName}': ${error.message}`);
         } finally {
           udb.release();
         }
@@ -57,8 +60,8 @@ export const dataRouter = router({
   get: procedure
     .input(DocInput)
     .query(async ({ input, ctx }) => {
-      const { tableName, id, idField } = input;
-      const sql = `SELECT * FROM "${tableName}" WHERE "${idField}" = $1 LIMIT 1;`;
+      const { tableName, schemaName, id, idField } = input;
+      const sql = `SELECT * FROM "${schemaName}"."${tableName}" WHERE "${idField}" = $1 LIMIT 1;`;
       
       if (ctx.user) {
         const udb = await db.withUser(ctx.user.id);
@@ -68,7 +71,7 @@ export const dataRouter = router({
           return result.rows[0] || null;
         } catch (error: any) {
           await udb.rollback();
-          throw new Error(`RLS Get error for ${tableName}/${id}: ${error.message}`);
+          throw new Error(`RLS Get error for ${schemaName}.${tableName}/${id}: ${error.message}`);
         } finally {
           udb.release();
         }
@@ -84,12 +87,12 @@ export const dataRouter = router({
   add: procedure
     .input(WriteInput)
     .mutation(async ({ input, ctx }) => {
-      const { tableName, record } = input;
+      const { tableName, schemaName, record } = input;
       const keys = Object.keys(record);
       const values = Object.values(record);
       const columns = keys.map(k => `"${k}"`).join(', ');
       const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
-      const sql = `INSERT INTO "${tableName}" (${columns}) VALUES (${placeholders}) RETURNING *;`;
+      const sql = `INSERT INTO "${schemaName}"."${tableName}" (${columns}) VALUES (${placeholders}) RETURNING *;`;
 
       if (ctx.user) {
         const udb = await db.withUser(ctx.user.id);
@@ -99,7 +102,7 @@ export const dataRouter = router({
           return result.rows[0];
         } catch (error: any) {
           await udb.rollback();
-          throw new Error(`RLS Add error for '${tableName}': ${error.message}`);
+          throw new Error(`RLS Add error for '${schemaName}.${tableName}': ${error.message}`);
         } finally {
           udb.release();
         }
@@ -115,11 +118,12 @@ export const dataRouter = router({
   update: procedure
     .input(UpdateInput)
     .mutation(async ({ input, ctx }) => {
-      const { tableName, id, idField, record } = input;
+      const { tableName, schemaName, id, idField, record } = input;
       const keys = Object.keys(record);
       const values = Object.values(record);
+      
       const setClause = keys.map((k, i) => `"${k}" = $${i + 1}`).join(', ');
-      const sql = `UPDATE "${tableName}" SET ${setClause} WHERE "${idField}" = $${keys.length + 1} RETURNING *;`;
+      const sql = `UPDATE "${schemaName}"."${tableName}" SET ${setClause} WHERE "${idField}" = $${keys.length + 1} RETURNING *;`;
       
       if (ctx.user) {
         const udb = await db.withUser(ctx.user.id);
@@ -129,7 +133,7 @@ export const dataRouter = router({
           return result.rows[0] || null;
         } catch (error: any) {
           await udb.rollback();
-          throw new Error(`RLS Update error for '${tableName}': ${error.message}`);
+          throw new Error(`RLS Update error for '${schemaName}.${tableName}': ${error.message}`);
         } finally {
           udb.release();
         }
@@ -145,8 +149,8 @@ export const dataRouter = router({
   delete: procedure
     .input(DocInput)
     .mutation(async ({ input, ctx }) => {
-      const { tableName, id, idField } = input;
-      const sql = `DELETE FROM "${tableName}" WHERE "${idField}" = $1 RETURNING *;`;
+      const { tableName, schemaName, id, idField } = input;
+      const sql = `DELETE FROM "${schemaName}"."${tableName}" WHERE "${idField}" = $1 RETURNING *;`;
       
       if (ctx.user) {
         const udb = await db.withUser(ctx.user.id);
@@ -156,7 +160,7 @@ export const dataRouter = router({
           return result.rows[0] || null;
         } catch (error: any) {
           await udb.rollback();
-          throw new Error(`RLS Delete error for '${tableName}': ${error.message}`);
+          throw new Error(`RLS Delete error for '${schemaName}.${tableName}': ${error.message}`);
         } finally {
           udb.release();
         }

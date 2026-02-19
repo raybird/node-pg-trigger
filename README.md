@@ -99,31 +99,20 @@ SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid)
 *   **資料一致性**：確保前端快取與資料庫狀態始終維持高度同步。
 *   **效能優化**：追補查詢經過索引優化，僅撈取必要的差異數據。
 
-### 身分驗證與安全性 (RLS)
+### 多租戶與 Schema 支持
 
-SDK 支援模擬使用者身分驗證，並會自動將使用者 ID 傳遞給 PostgreSQL，讓您可以利用 **Row-Level Security (RLS)** 實作精密的資料權限控管。
+SDK 支援在非 `public` 的 Schema 中操作資料與建立監聽，這對於實作多租戶隔離架構非常有用。
 
-**範例：設定使用者身分**
+**範例：操作特定 Schema**
 
 ```typescript
-// 以使用者 ID 'user_123' 登入
-sdk.auth('user_123');
+// 監聽 'tenant_a' schema 下的 'users' 資料表
+const tenantUsers = sdk.collection('users', 'tenant_a');
 
-// 隨後的請求都會帶上身分，PG 中可透過 current_setting('request.user_id') 獲取
-const myPrivateData = await sdk.collection('private_notes').onSnapshot(...);
+tenantUsers.onSnapshot(({ record: data }) => {
+  console.log('租戶 A 的使用者列表:', data);
+});
 
-// 登出
-sdk.signOut();
-```
-
-**資料庫端設定 (RLS 範例)**：
-
-```sql
--- 在 PG 中啟用 RLS
-ALTER TABLE private_notes ENABLE ROW LEVEL SECURITY;
-
--- 建立策略：僅允許擁有者讀取
-CREATE POLICY notes_access_policy ON private_notes
-FOR SELECT
-USING (owner_id = current_setting('request.user_id'));
+// 新增資料到指定 schema
+await tenantUsers.add({ name: 'Tenant User' });
 ```

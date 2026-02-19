@@ -32,8 +32,9 @@
     - [x] 確保訂閱事件 (Subscription) 同樣受到 RLS 過濾。
 
 ## ⚡ 階段三：效能與規模化 (Scale)
-- [ ] **多租戶支持 (Multi-tenancy)**：
-    - 支持單一服務實例監聽多個 Database/Schema。
+- [x] **多租戶支持 (Multi-tenancy)**：
+    - [x] 支援單一服務實例監聽多個 Schema。
+    - [x] SDK 支援 `collection('table', 'schema')` 指定命名空間。
 - [ ] **中介層優化**：
     - 引入 Redis 作為事件總線 (Event Bus)，以支援水平擴展的後端節點。
 

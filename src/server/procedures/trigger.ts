@@ -4,6 +4,7 @@ import { db } from '../lib/db';
 
 const TableInput = z.object({
   tableName: z.string().min(1, "Table name cannot be empty."),
+  schemaName: z.string().optional().default('public'),
 });
 
 export const triggerRouter = router({
@@ -13,18 +14,18 @@ export const triggerRouter = router({
   create: procedure
     .input(TableInput)
     .mutation(async ({ input }) => {
-      const { tableName } = input;
+      const { tableName, schemaName } = input;
       const triggerName = `t_notify_${tableName}`;
 
       const sql = `
         CREATE TRIGGER ${triggerName}
-        AFTER INSERT OR UPDATE OR DELETE ON "${tableName}"
+        AFTER INSERT OR UPDATE OR DELETE ON "${schemaName}"."${tableName}"
         FOR EACH ROW EXECUTE PROCEDURE public.notify_trigger();
       `;
 
       try {
         await db.query(sql);
-        return { success: true, message: `Trigger '${triggerName}' created for table '${tableName}'.` };
+        return { success: true, message: `Trigger '${triggerName}' created for table '${schemaName}.${tableName}'.` };
       } catch (error: any) {
         throw new Error(`Failed to create trigger: ${error.message}`);
       }
@@ -34,19 +35,23 @@ export const triggerRouter = router({
    * Query: 查詢所有由本系統建立的觸發器
    */
   list: procedure
-    .query(async () => {
+    .input(z.object({ schemaName: z.string().optional() }).optional())
+    .query(async ({ input }) => {
+      const schemaFilter = input?.schemaName ? `AND event_object_schema = '${input.schemaName}'` : '';
       const sql = `
         SELECT
+          event_object_schema AS "schemaName",
           event_object_table AS "tableName",
           trigger_name AS "triggerName"
         FROM information_schema.triggers
         WHERE trigger_name LIKE 't_notify_%'
-        GROUP BY "tableName", "triggerName"
-        ORDER BY "tableName";
+        ${schemaFilter}
+        GROUP BY "schemaName", "tableName", "triggerName"
+        ORDER BY "schemaName", "tableName";
       `;
       
       try {
-        const result = await db.query<{ tableName: string, triggerName: string }>(sql);
+        const result = await db.query<{ schemaName: string, tableName: string, triggerName: string }>(sql);
         return result.rows;
       } catch (error: any) {
         throw new Error(`Failed to list triggers: ${error.message}`);
@@ -59,14 +64,14 @@ export const triggerRouter = router({
   delete: procedure
     .input(TableInput)
     .mutation(async ({ input }) => {
-      const { tableName } = input;
+      const { tableName, schemaName } = input;
       const triggerName = `t_notify_${tableName}`;
 
-      const sql = `DROP TRIGGER IF EXISTS ${triggerName} ON "${tableName}";`;
+      const sql = `DROP TRIGGER IF EXISTS ${triggerName} ON "${schemaName}"."${tableName}";`;
 
       try {
         await db.query(sql);
-        return { success: true, message: `Trigger '${triggerName}' deleted from table '${tableName}'.` };
+        return { success: true, message: `Trigger '${triggerName}' deleted from table '${schemaName}.${tableName}'.` };
       } catch (error: any) {
         throw new Error(`Failed to delete trigger: ${error.message}`);
       }
