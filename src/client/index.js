@@ -9,7 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.VanillaFirestore = exports.Document = exports.Collection = exports.Query = exports.FieldValue = void 0;
+exports.VanillaFirestore = exports.WriteBatch = exports.Document = exports.Collection = exports.Query = exports.FieldValue = void 0;
 exports.createSdk = createSdk;
 const client_1 = require("@trpc/client");
 const client_2 = require("@trpc/client");
@@ -22,32 +22,34 @@ class FieldValue {
         this.value = value;
     }
     static serverTimestamp() {
-        return new FieldValue('SERVER_TIMESTAMP');
+        return new FieldValue("SERVER_TIMESTAMP");
     }
     static increment(n) {
-        return new FieldValue('INCREMENT', n);
+        return new FieldValue("INCREMENT", n);
     }
     static delete() {
-        return new FieldValue('DELETE_FIELD');
+        return new FieldValue("DELETE_FIELD");
     }
     static arrayUnion(...elements) {
-        return new FieldValue('ARRAY_UNION', elements);
+        return new FieldValue("ARRAY_UNION", elements);
     }
     static arrayRemove(...elements) {
-        return new FieldValue('ARRAY_REMOVE', elements);
+        return new FieldValue("ARRAY_REMOVE", elements);
     }
     static isFieldValue(val) {
         return val && val._isFieldValue === true;
     }
     // 為了跨環境傳輸時保持型別資訊
-    get _isFieldValue() { return true; }
+    get _isFieldValue() {
+        return true;
+    }
 }
 exports.FieldValue = FieldValue;
 /**
  * Query 類別 - 支援過濾、排序與分頁
  */
 class Query {
-    constructor(tableName, sdk, schemaName = 'public') {
+    constructor(tableName, sdk, schemaName = "public") {
         this.tableName = tableName;
         this.sdk = sdk;
         this.schemaName = schemaName;
@@ -62,7 +64,7 @@ class Query {
         this.filters.push({ field, operator, value });
         return this;
     }
-    orderBy(field, direction = 'asc') {
+    orderBy(field, direction = "asc") {
         this.sortItems.push({ field, direction });
         return this;
     }
@@ -80,18 +82,32 @@ class Query {
     matchesFilters(record) {
         if (!record)
             return false;
-        return this.filters.every(f => {
+        return this.filters.every((f) => {
             const val = record[f.field];
+            const options = Array.isArray(f.value) ? f.value : [f.value];
             switch (f.operator) {
-                case '==': return val == f.value;
-                case '!=': return val != f.value;
-                case '>': return val > f.value;
-                case '<': return val < f.value;
-                case '>=': return val >= f.value;
-                case '<=': return val <= f.value;
-                case 'contains':
-                    return String(val).toLowerCase().includes(String(f.value).toLowerCase());
-                default: return true;
+                case "==":
+                    return val == f.value;
+                case "!=":
+                    return val != f.value;
+                case ">":
+                    return val > f.value;
+                case "<":
+                    return val < f.value;
+                case ">=":
+                    return val >= f.value;
+                case "<=":
+                    return val <= f.value;
+                case "in":
+                    return options.some((option) => option == val);
+                case "not-in":
+                    return options.every((option) => option != val);
+                case "contains":
+                    return String(val)
+                        .toLowerCase()
+                        .includes(String(f.value).toLowerCase());
+                default:
+                    return true;
             }
         });
     }
@@ -105,17 +121,17 @@ class Query {
                     where: this.filters,
                     orderBy: this.sortItems,
                     limit: this._limit,
-                    offset: this._offset
+                    offset: this._offset,
                 });
                 this.cache = initialData;
                 callback({
                     timestamp: new Date().toISOString(),
                     txid: 0,
-                    action: 'initial',
+                    action: "initial",
                     schema: this.schemaName,
                     table: this.tableName,
                     record: this.cache,
-                    old_record: null
+                    old_record: null,
                 });
             }
             catch (err) {
@@ -124,7 +140,8 @@ class Query {
             // 2. 訂閱變更並自動維護快取 (含過濾邏輯)
             const subscription = this.sdk.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
                 onData: (event) => {
-                    if (event.table !== this.tableName || (event.schema && event.schema !== this.schemaName))
+                    if (event.table !== this.tableName ||
+                        (event.schema && event.schema !== this.schemaName))
                         return;
                     if (event.txid)
                         this.lastTxid = event.txid;
@@ -134,11 +151,11 @@ class Query {
                     const isMatch = this.matchesFilters(record);
                     const wasMatch = this.matchesFilters(oldRecord);
                     let changed = false;
-                    if (event.action === 'insert' && isMatch) {
+                    if (event.action === "insert" && isMatch) {
                         this.cache = [...this.cache, record];
                         changed = true;
                     }
-                    else if (event.action === 'update') {
+                    else if (event.action === "update") {
                         const id = record.id;
                         const exists = this.cache.some((item) => item.id === id);
                         if (isMatch && !exists) {
@@ -157,7 +174,7 @@ class Query {
                             changed = true;
                         }
                     }
-                    else if (event.action === 'delete' && wasMatch) {
+                    else if (event.action === "delete" && wasMatch) {
                         const id = oldRecord.id;
                         this.cache = this.cache.filter((item) => item.id !== id);
                         changed = true;
@@ -175,13 +192,27 @@ class Query {
             return () => subscription.unsubscribe();
         });
     }
+    get() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const rows = yield this.sdk.data.list.query({
+                tableName: this.tableName,
+                schemaName: this.schemaName,
+                where: this.filters,
+                orderBy: this.sortItems,
+                limit: this._limit,
+                offset: this._offset,
+            });
+            this.cache = rows;
+            return rows;
+        });
+    }
 }
 exports.Query = Query;
 /**
  * Collection 繼承自 Query
  */
 class Collection extends Query {
-    constructor(tableName, sdk, schemaName = 'public') {
+    constructor(tableName, sdk, schemaName = "public") {
         super(tableName, sdk, schemaName);
     }
     add(record) {
@@ -189,14 +220,17 @@ class Collection extends Query {
             return this.sdk.data.add.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
-                record
+                record,
             });
         });
+    }
+    doc(id, idField = "id") {
+        return new Document(this.tableName, id, this.sdk, idField, this.schemaName);
     }
 }
 exports.Collection = Collection;
 class Document {
-    constructor(tableName, id, sdk, idField = 'id', schemaName = 'public') {
+    constructor(tableName, id, sdk, idField = "id", schemaName = "public") {
         this.tableName = tableName;
         this.id = id;
         this.sdk = sdk;
@@ -211,7 +245,7 @@ class Document {
                 tableName: this.tableName,
                 schemaName: this.schemaName,
                 id: this.id,
-                idField: this.idField
+                idField: this.idField,
             });
         });
     }
@@ -223,11 +257,11 @@ class Document {
                 callback({
                     timestamp: new Date().toISOString(),
                     txid: 0,
-                    action: 'initial',
+                    action: "initial",
                     schema: this.schemaName,
                     table: this.tableName,
                     record: this.cache,
-                    old_record: null
+                    old_record: null,
                 });
             }
             catch (err) {
@@ -235,7 +269,8 @@ class Document {
             }
             const subscription = this.sdk.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
                 onData: (event) => {
-                    if (event.table !== this.tableName || (event.schema && event.schema !== this.schemaName))
+                    if (event.table !== this.tableName ||
+                        (event.schema && event.schema !== this.schemaName))
                         return;
                     if (event.txid)
                         this.lastTxid = event.txid;
@@ -244,7 +279,7 @@ class Document {
                     const matchesId = (currentRecord && currentRecord[this.idField] == this.id) ||
                         (oldRecord && oldRecord[this.idField] == this.id);
                     if (matchesId) {
-                        this.cache = event.action === 'delete' ? null : currentRecord;
+                        this.cache = event.action === "delete" ? null : currentRecord;
                         callback(Object.assign(Object.assign({}, event), { record: this.cache }));
                     }
                 },
@@ -262,7 +297,7 @@ class Document {
                 schemaName: this.schemaName,
                 id: this.id,
                 idField: this.idField,
-                record
+                record,
             });
         });
     }
@@ -272,12 +307,77 @@ class Document {
                 tableName: this.tableName,
                 schemaName: this.schemaName,
                 id: this.id,
-                idField: this.idField
+                idField: this.idField,
+            });
+        });
+    }
+    set(record_1) {
+        return __awaiter(this, arguments, void 0, function* (record, options = {}) {
+            var _a;
+            return this.sdk.data.set.mutate({
+                tableName: this.tableName,
+                schemaName: this.schemaName,
+                id: this.id,
+                idField: this.idField,
+                record,
+                merge: (_a = options.merge) !== null && _a !== void 0 ? _a : false,
             });
         });
     }
 }
 exports.Document = Document;
+/**
+ * WriteBatch - 批量寫入支援
+ */
+class WriteBatch {
+    constructor(sdk) {
+        this.sdk = sdk;
+        this.operations = [];
+    }
+    set(doc, record, options = {}) {
+        var _a;
+        this.operations.push({
+            type: "set",
+            tableName: doc.tableName,
+            schemaName: doc.schemaName,
+            id: doc.id,
+            idField: doc.idField,
+            record,
+            merge: (_a = options.merge) !== null && _a !== void 0 ? _a : false,
+        });
+        return this;
+    }
+    update(doc, record) {
+        this.operations.push({
+            type: "update",
+            tableName: doc.tableName,
+            schemaName: doc.schemaName,
+            id: doc.id,
+            idField: doc.idField,
+            record,
+        });
+        return this;
+    }
+    delete(doc) {
+        this.operations.push({
+            type: "delete",
+            tableName: doc.tableName,
+            schemaName: doc.schemaName,
+            id: doc.id,
+            idField: doc.idField,
+        });
+        return this;
+    }
+    commit() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.operations.length === 0)
+                return;
+            yield this.sdk.data.batch.mutate({ operations: this.operations });
+            this.operations = [];
+        });
+    }
+}
+exports.WriteBatch = WriteBatch;
 class VanillaFirestore {
     constructor(url) {
         this.url = url;
@@ -285,36 +385,40 @@ class VanillaFirestore {
         this.initTrpc();
     }
     initTrpc() {
-        const baseUrl = this.url.endsWith('/') ? this.url : `${this.url}/`;
-        const wsUrl = `${this.url.includes('https') ? 'wss' : 'ws'}://${this.url.split('//')[1].split('/')[0]}/trpc${this.userId ? `?token=${this.userId}` : ''}`;
+        const baseUrl = this.url.endsWith("/") ? this.url : `${this.url}/`;
+        const wsUrl = `${this.url.includes("https") ? "wss" : "ws"}://${this.url.split("//")[1].split("/")[0]}/trpc${this.userId ? `?token=${this.userId}` : ""}`;
         this.trpc = (0, client_1.createTRPCProxyClient)({
             links: [
                 (0, client_1.splitLink)({
                     condition(op) {
-                        return op.type === 'subscription';
+                        return op.type === "subscription";
                     },
                     true: this.getEndingLink(wsUrl),
                     false: (0, client_1.httpBatchLink)({
                         url: `${baseUrl}trpc`,
                         headers: () => {
-                            return this.userId ? {
-                                Authorization: `Bearer ${this.userId}`,
-                            } : {};
-                        }
+                            return this.userId
+                                ? {
+                                    Authorization: `Bearer ${this.userId}`,
+                                }
+                                : {};
+                        },
                     }),
                 }),
             ],
         });
     }
     getEndingLink(wsUrl) {
-        if (typeof window === 'undefined') {
+        if (typeof window === "undefined") {
             return (0, client_1.httpBatchLink)({
-                url: this.url.endsWith('/') ? `${this.url}trpc` : `${this.url}/trpc`,
+                url: this.url.endsWith("/") ? `${this.url}trpc` : `${this.url}/trpc`,
                 headers: () => {
-                    return this.userId ? {
-                        Authorization: `Bearer ${this.userId}`,
-                    } : {};
-                }
+                    return this.userId
+                        ? {
+                            Authorization: `Bearer ${this.userId}`,
+                        }
+                        : {};
+                },
             });
         }
         const client = (0, client_2.createWSClient)({
@@ -334,10 +438,13 @@ class VanillaFirestore {
         this.initTrpc();
         return this;
     }
-    collection(name, schema = 'public') {
+    batch() {
+        return new WriteBatch(this.trpc);
+    }
+    collection(name, schema = "public") {
         return new Collection(name, this.trpc, schema);
     }
-    doc(name, id, idField = 'id', schema = 'public') {
+    doc(name, id, idField = "id", schema = "public") {
         return new Document(name, id, this.trpc, idField, schema);
     }
     get client() {

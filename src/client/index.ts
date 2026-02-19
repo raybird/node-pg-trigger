@@ -39,6 +39,10 @@ export interface SortItem {
   direction: "asc" | "desc";
 }
 
+export interface SetOptions {
+  merge?: boolean;
+}
+
 /**
  * FieldValue - 支援特殊伺服器端值的處理
  */
@@ -251,6 +255,19 @@ export class Query<T = any> {
 
     return () => subscription.unsubscribe();
   }
+
+  async get(): Promise<T[]> {
+    const rows = await this.sdk.data.list.query({
+      tableName: this.tableName,
+      schemaName: this.schemaName,
+      where: this.filters,
+      orderBy: this.sortItems,
+      limit: this._limit,
+      offset: this._offset,
+    });
+    this.cache = rows;
+    return rows;
+  }
 }
 
 /**
@@ -267,6 +284,16 @@ export class Collection<T = any> extends Query<T> {
       schemaName: this.schemaName,
       record,
     });
+  }
+
+  doc(id: string | number, idField: string = "id"): Document<T> {
+    return new Document<T>(
+      this.tableName,
+      id,
+      this.sdk,
+      idField,
+      this.schemaName,
+    );
   }
 }
 
@@ -369,6 +396,17 @@ export class Document<T = any> {
       idField: this.idField,
     });
   }
+
+  async set(record: Partial<T>, options: SetOptions = {}): Promise<T | null> {
+    return this.sdk.data.set.mutate({
+      tableName: this.tableName,
+      schemaName: this.schemaName,
+      id: this.id,
+      idField: this.idField,
+      record,
+      merge: options.merge ?? false,
+    });
+  }
 }
 
 /**
@@ -379,7 +417,11 @@ export class WriteBatch {
 
   constructor(private sdk: any) {}
 
-  set<T = any>(doc: Document<T>, record: Partial<T>): WriteBatch {
+  set<T = any>(
+    doc: Document<T>,
+    record: Partial<T>,
+    options: SetOptions = {},
+  ): WriteBatch {
     this.operations.push({
       type: "set",
       tableName: (doc as any).tableName,
@@ -387,6 +429,7 @@ export class WriteBatch {
       id: (doc as any).id,
       idField: (doc as any).idField,
       record,
+      merge: options.merge ?? false,
     });
     return this;
   }

@@ -107,6 +107,27 @@ await aliceDoc.update({ name: "Alice Smith" });
 await aliceDoc.delete();
 ```
 
+**範例：Firestore 風格 `set()`（含 merge）**
+
+```typescript
+const userRef = sdk.collection("users").doc("raybird");
+
+// 1) 預設 set: upsert（不存在就建立，存在就以提供欄位覆寫）
+await userRef.set({
+  name: "Ray Bird",
+  role: "editor",
+});
+
+// 2) merge 模式: 只更新指定欄位，保留其他欄位
+await userRef.set(
+  {
+    lastSeenAt: FieldValue.serverTimestamp(),
+    loginCount: FieldValue.increment(1),
+  },
+  { merge: true },
+);
+```
+
 **範例：使用伺服器特殊值 (FieldValue)**
 
 SDK 支援多種伺服器端原子操作，確保資料的一致性與效能。
@@ -150,6 +171,7 @@ const profileRef = sdk.doc("profiles", "raybird");
 // 打包多個異動
 batch.update(userRef, { lastSeen: FieldValue.serverTimestamp() });
 batch.update(profileRef, { points: FieldValue.increment(10) });
+batch.set(userRef, { status: "active" }, { merge: true });
 
 // 一次性送出並執行交易
 await batch.commit();

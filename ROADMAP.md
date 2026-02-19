@@ -21,6 +21,7 @@
   - [x] `collection.add(data)` 實作。
   - [x] `doc.update(data)` 實作。
   - [x] `doc.delete()` 實作。
+  - [x] `doc.set(data, { merge })` upsert 與部分欄位合併。
 - [x] **進階查詢支援 (Querying)**：
   - [x] 實作 `where()`, `orderBy()`, `limit()` 鏈式語法。
   - [x] Server 端支援動態 SQL 過濾條件生成。

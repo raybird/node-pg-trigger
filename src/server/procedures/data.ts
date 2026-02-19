@@ -55,6 +55,11 @@ const UpdateInput = DocInput.extend({
   record: z.record(z.any()),
 });
 
+const SetInput = DocInput.extend({
+  record: z.record(z.any()),
+  merge: z.boolean().optional().default(false),
+});
+
 const BatchInput = z.object({
   operations: z.array(
     z.object({
@@ -64,6 +69,7 @@ const BatchInput = z.object({
       id: z.any().optional(),
       idField: z.string().optional().default("id"),
       record: z.record(z.any()).optional(),
+      merge: z.boolean().optional().default(false),
     }),
   ),
 });
@@ -358,6 +364,64 @@ export const dataRouter = router({
   }),
 
   /**
+   * Mutation: 設定資料（Firestore-like set，支援 merge）
+   */
+  set: procedure.input(SetInput).mutation(async ({ input, ctx }) => {
+    const { tableName, schemaName, id, idField, record, merge } = input;
+    const upsertRecord = { ...record, [idField]: id };
+
+    const {
+      columns,
+      placeholders,
+      params: insertParams,
+    } = prepareWrite(upsertRecord, 1);
+
+    const { setClause, params: mergeParams } = prepareUpdate(
+      record,
+      insertParams.length + 1,
+    );
+
+    const mergeSetClause = setClause || `"${idField}" = EXCLUDED."${idField}"`;
+
+    const replaceSetClause =
+      Object.keys(upsertRecord)
+        .map((key) => `"${key}" = EXCLUDED."${key}"`)
+        .join(", ") || `"${idField}" = EXCLUDED."${idField}"`;
+
+    const onConflictSetClause = merge ? mergeSetClause : replaceSetClause;
+    const sql = `
+      INSERT INTO "${schemaName}"."${tableName}" (${columns})
+      VALUES (${placeholders})
+      ON CONFLICT ("${idField}")
+      DO UPDATE SET ${onConflictSetClause}
+      RETURNING *;
+    `;
+
+    const allParams = merge
+      ? [...insertParams, ...mergeParams]
+      : [...insertParams];
+
+    if (ctx.user) {
+      const udb = await db.withUser(ctx.user.id);
+      try {
+        const result = await udb.query(sql, allParams);
+        await udb.commit();
+        return result.rows[0] || null;
+      } catch (error: any) {
+        await udb.rollback();
+        throw new Error(
+          `RLS Set error for '${schemaName}.${tableName}/${id}': ${error.message}`,
+        );
+      } finally {
+        udb.release();
+      }
+    }
+
+    const result = await db.query(sql, allParams);
+    return result.rows[0] || null;
+  }),
+
+  /**
    * Mutation: 刪除資料
    */
   delete: procedure.input(DocInput).mutation(async ({ input, ctx }) => {
@@ -392,7 +456,39 @@ export const dataRouter = router({
 
     try {
       for (const op of input.operations) {
-        if (op.type === "set" || (op.type === "update" && !op.id)) {
+        if (op.type === "set" && op.id !== undefined) {
+          const upsertRecord = { ...(op.record || {}), [op.idField]: op.id };
+          const {
+            columns,
+            placeholders,
+            params: insertParams,
+          } = prepareWrite(upsertRecord, 1);
+
+          const { setClause, params: mergeParams } = prepareUpdate(
+            op.record || {},
+            insertParams.length + 1,
+          );
+
+          const mergeSetClause =
+            setClause || `"${op.idField}" = EXCLUDED."${op.idField}"`;
+          const replaceSetClause =
+            Object.keys(upsertRecord)
+              .map((key) => `"${key}" = EXCLUDED."${key}"`)
+              .join(", ") || `"${op.idField}" = EXCLUDED."${op.idField}"`;
+
+          const sql = `
+            INSERT INTO "${op.schemaName}"."${op.tableName}" (${columns})
+            VALUES (${placeholders})
+            ON CONFLICT ("${op.idField}")
+            DO UPDATE SET ${op.merge ? mergeSetClause : replaceSetClause};
+          `;
+
+          const allParams = op.merge
+            ? [...insertParams, ...mergeParams]
+            : [...insertParams];
+
+          await udb.query(sql, allParams);
+        } else if (op.type === "set" || (op.type === "update" && !op.id)) {
           // 注意：這裡簡化處理，set 如果沒 id 則視為 insert
           const { columns, placeholders, params } = prepareWrite(
             op.record || {},
