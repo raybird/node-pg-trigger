@@ -13,7 +13,7 @@ const app = express();
 const server = http.createServer(app);
 
 // 服務靜態檔案 (教學網站)
-app.use(express.static(path.join(__dirname, '../../public')));
+app.use(express.static(path.join(__dirname, '../../docs')));
 
 const wss = new WebSocketServer({ server });
 
