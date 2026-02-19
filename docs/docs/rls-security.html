@@ -1,0 +1,31 @@
+<h1>🔒 身分驗證與 RLS</h1>
+<p>本專案原生支援 PostgreSQL 的 <strong>Row-Level Security (RLS)</strong>，這意味著您可以在資料庫層級實現真正的資料隔離。</p>
+
+<h2>1. 運作原理</h2>
+<ol>
+    <li>前端 SDK 透過 <code>sdk.auth(userId)</code> 設定身分。</li>
+    <li>後端伺服器在執行 SQL 前，會先執行 <code>SET LOCAL "request.user_id" = '...'</code>。</li>
+    <li>PostgreSQL 的 RLS 策略會自動攔截不屬於該使用者的資料。</li>
+</ol>
+
+<h2>2. 資料庫端設定範例</h2>
+<p>假設您有一張 <code>private_notes</code> 資料表，您希望使用者只能看到自己的筆記：</p>
+<pre><code>-- 1. 啟用 RLS
+ALTER TABLE private_notes ENABLE ROW LEVEL SECURITY;
+
+-- 2. 建立存取策略
+CREATE POLICY user_access_policy ON private_notes
+FOR ALL
+USING (owner_id = current_setting('request.user_id'));
+</code></pre>
+
+<h2>3. SDK 調用方式</h2>
+<pre><code>// 前端設定身分
+sdk.auth('user_123');
+
+// 隨後的訂閱與查詢都會受到 RLS 保護
+sdk.collection('private_notes').onSnapshot(({ record: data }) => {
+    // 這裡只會收到 owner_id 為 'user_123' 的異動
+    console.log('受保護的資料：', data);
+});
+</code></pre>

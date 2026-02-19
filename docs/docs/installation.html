@@ -1,0 +1,29 @@
+<h1>📦 安裝與配置</h1>
+<p><code>pg-trigger-manager</code> 旨在提供「零設定」的開發體驗。您只需要配置資料庫連線，系統會自動處理其餘細節。</p>
+
+<h2>1. 環境變數設定</h2>
+<p>建立 <code>.env</code> 檔案並填入以下資訊：</p>
+<pre><code># PostgreSQL 連線
+POSTGRES_HOST=localhost
+POSTGRES_DB=your_db
+POSTGRES_USER=your_user
+POSTGRES_PASSWORD=your_pass
+
+# 🚀 宣告式監聽配置 (優雅模式)
+# 列出您想要自動掛載觸發器的資料表，以逗號分隔。
+WATCH_TABLES=users,posts,orders
+</code></pre>
+
+<h2>2. 自動初始化流程</h2>
+<p>當您執行 <code>npm start</code> 時，系統會自動執行以下動作：</p>
+<ul>
+    <li><strong>自動檢查函式</strong>：在資料庫中建立 <code>notify_trigger()</code> 通用函式。</li>
+    <li><strong>自動掛載觸發器</strong>：為 <code>WATCH_TABLES</code> 中的每一張表建立 <code>AFTER INSERT/UPDATE/DELETE</code> 觸發器。</li>
+    <li><strong>建立稽核日誌</strong>：自動建立 <code>audit_log</code> 表以支援斷線重連。</li>
+</ul>
+
+<h2>3. 啟動伺服器</h2>
+<pre><code>npm install
+npm start
+</code></pre>
+<p>伺服器預設啟動於 <code>http://localhost:5000</code>。</p>
