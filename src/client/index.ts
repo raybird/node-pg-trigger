@@ -45,6 +45,11 @@ export interface SetOptions {
   merge?: boolean;
 }
 
+export interface FirestoreDataConverter<TModel = any> {
+  fromFirestore(data: any): TModel;
+  toFirestore?(model: Partial<TModel>): any;
+}
+
 /**
  * FieldValue - 支援特殊伺服器端值的處理
  */
@@ -100,6 +105,7 @@ export class Query<T = any> {
   protected _limitToLast: boolean = false;
   protected lastTxid: string | number | null = null;
   protected cache: T[] = [];
+  protected converter: FirestoreDataConverter<T> | null = null;
 
   constructor(
     protected tableName: string,
@@ -132,6 +138,32 @@ export class Query<T = any> {
   offset(n: number): Query<T> {
     this._offset = n;
     return this;
+  }
+
+  withConverter<U = any>(converter: FirestoreDataConverter<U>): Query<U> {
+    const next = new Query<U>(this.tableName, this.sdk, this.schemaName);
+    (next as any).filters = [...this.filters];
+    (next as any).sortItems = [...this.sortItems];
+    (next as any)._limit = this._limit;
+    (next as any)._offset = this._offset;
+    (next as any)._limitToLast = this._limitToLast;
+    (next as any).lastTxid = this.lastTxid;
+    (next as any).converter = converter;
+    return next;
+  }
+
+  protected toModel(data: any): T {
+    if (!this.converter) return data as T;
+    return this.converter.fromFirestore(data);
+  }
+
+  protected toModels(data: any[]): T[] {
+    return data.map((item) => this.toModel(item));
+  }
+
+  protected toWire(model: any): any {
+    if (!this.converter || !this.converter.toFirestore) return model;
+    return this.converter.toFirestore(model);
   }
 
   /**
@@ -245,10 +277,11 @@ export class Query<T = any> {
         limit: this._limit,
         offset: this._offset,
       });
+      const initialRows = this.toModels(initialData as any[]);
       const normalizedInitial = this._limitToLast
-        ? (initialData as T[]).reverse()
-        : initialData;
-      this.cache = this.applyWindow(normalizedInitial);
+        ? initialRows.reverse()
+        : initialRows;
+      this.cache = this.applyWindow(normalizedInitial as T[]);
 
       callback({
         timestamp: new Date().toISOString(),
@@ -279,7 +312,7 @@ export class Query<T = any> {
 
           if (event.txid) this.lastTxid = event.txid;
 
-          const record = event.record as any;
+          const record = this.toModel(event.record as any) as any;
           const oldRecord = event.old_record as any;
 
           // 判斷該變更是否影響目前查詢的結果集
@@ -363,7 +396,8 @@ export class Query<T = any> {
       offset: this._offset,
     });
 
-    const normalizedRows = this._limitToLast ? rows.reverse() : rows;
+    const rowModels = this.toModels(rows as any[]);
+    const normalizedRows = this._limitToLast ? rowModels.reverse() : rowModels;
     this.cache = this.applyWindow(normalizedRows);
     return this.cache;
   }
@@ -377,11 +411,23 @@ export class Collection<T = any> extends Query<T> {
     super(tableName, sdk, schemaName);
   }
 
+  withConverter<U = any>(converter: FirestoreDataConverter<U>): Collection<U> {
+    const next = new Collection<U>(this.tableName, this.sdk, this.schemaName);
+    (next as any).filters = [...this.filters];
+    (next as any).sortItems = [...this.sortItems];
+    (next as any)._limit = this._limit;
+    (next as any)._offset = this._offset;
+    (next as any)._limitToLast = this._limitToLast;
+    (next as any).lastTxid = this.lastTxid;
+    (next as any).converter = converter;
+    return next;
+  }
+
   async add(record: Partial<T>): Promise<T> {
     return this.sdk.data.add.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
-      record,
+      record: this.toWire(record),
     });
   }
 
@@ -392,6 +438,7 @@ export class Collection<T = any> extends Query<T> {
       this.sdk,
       idField,
       this.schemaName,
+      this.converter,
     );
   }
 }
@@ -406,15 +453,38 @@ export class Document<T = any> {
     private sdk: any,
     private idField: string = "id",
     private schemaName: string = "public",
+    private converter: FirestoreDataConverter<T> | null = null,
   ) {}
 
+  withConverter<U = any>(converter: FirestoreDataConverter<U>): Document<U> {
+    return new Document<U>(
+      this.tableName,
+      this.id,
+      this.sdk,
+      this.idField,
+      this.schemaName,
+      converter,
+    );
+  }
+
+  private toModel(data: any): T {
+    if (!this.converter) return data as T;
+    return this.converter.fromFirestore(data);
+  }
+
+  private toWire(model: any): any {
+    if (!this.converter || !this.converter.toFirestore) return model;
+    return this.converter.toFirestore(model);
+  }
+
   async get(): Promise<T | null> {
-    return this.sdk.data.get.query({
+    const row = await this.sdk.data.get.query({
       tableName: this.tableName,
       schemaName: this.schemaName,
       id: this.id,
       idField: this.idField,
     });
+    return row ? this.toModel(row) : null;
   }
 
   async onSnapshot(callback: (snapshot: DbEvent<T | null>) => void) {
@@ -450,7 +520,7 @@ export class Document<T = any> {
 
           if (event.txid) this.lastTxid = event.txid;
 
-          const currentRecord = event.record as any;
+          const currentRecord = this.toModel(event.record as any) as any;
           const oldRecord = event.old_record as any;
 
           const matchesId =
@@ -488,33 +558,36 @@ export class Document<T = any> {
   }
 
   async update(record: Partial<T>): Promise<T | null> {
-    return this.sdk.data.update.mutate({
+    const updated = await this.sdk.data.update.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
       id: this.id,
       idField: this.idField,
-      record,
+      record: this.toWire(record),
     });
+    return updated ? this.toModel(updated) : null;
   }
 
   async delete(): Promise<T | null> {
-    return this.sdk.data.delete.mutate({
+    const deleted = await this.sdk.data.delete.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
       id: this.id,
       idField: this.idField,
     });
+    return deleted ? this.toModel(deleted) : null;
   }
 
   async set(record: Partial<T>, options: SetOptions = {}): Promise<T | null> {
-    return this.sdk.data.set.mutate({
+    const setRow = await this.sdk.data.set.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
       id: this.id,
       idField: this.idField,
-      record,
+      record: this.toWire(record),
       merge: options.merge ?? false,
     });
+    return setRow ? this.toModel(setRow) : null;
   }
 }
 
@@ -588,7 +661,7 @@ export class VanillaFirestore {
     this.trpc = createTRPCProxyClient<AppRouter>({
       links: [
         splitLink({
-          condition(op) {
+          condition(op: any) {
             return op.type === "subscription";
           },
           true: this.getEndingLink(wsUrl),

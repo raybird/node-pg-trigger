@@ -60,6 +60,7 @@ class Query {
         this._limitToLast = false;
         this.lastTxid = null;
         this.cache = [];
+        this.converter = null;
     }
     where(field, operator, value) {
         this.filters.push({ field, operator, value });
@@ -82,6 +83,30 @@ class Query {
     offset(n) {
         this._offset = n;
         return this;
+    }
+    withConverter(converter) {
+        const next = new Query(this.tableName, this.sdk, this.schemaName);
+        next.filters = [...this.filters];
+        next.sortItems = [...this.sortItems];
+        next._limit = this._limit;
+        next._offset = this._offset;
+        next._limitToLast = this._limitToLast;
+        next.lastTxid = this.lastTxid;
+        next.converter = converter;
+        return next;
+    }
+    toModel(data) {
+        if (!this.converter)
+            return data;
+        return this.converter.fromFirestore(data);
+    }
+    toModels(data) {
+        return data.map((item) => this.toModel(item));
+    }
+    toWire(model) {
+        if (!this.converter || !this.converter.toFirestore)
+            return model;
+        return this.converter.toFirestore(model);
     }
     /**
      * 檢查記錄是否符合目前的所有過濾條件 (客戶端過濾)
@@ -185,9 +210,10 @@ class Query {
                     limit: this._limit,
                     offset: this._offset,
                 });
+                const initialRows = this.toModels(initialData);
                 const normalizedInitial = this._limitToLast
-                    ? initialData.reverse()
-                    : initialData;
+                    ? initialRows.reverse()
+                    : initialRows;
                 this.cache = this.applyWindow(normalizedInitial);
                 callback({
                     timestamp: new Date().toISOString(),
@@ -210,7 +236,7 @@ class Query {
                         return;
                     if (event.txid)
                         this.lastTxid = event.txid;
-                    const record = event.record;
+                    const record = this.toModel(event.record);
                     const oldRecord = event.old_record;
                     // 判斷該變更是否影響目前查詢的結果集
                     const isMatch = this.matchesFilters(record);
@@ -283,7 +309,8 @@ class Query {
                 limit: this._limit,
                 offset: this._offset,
             });
-            const normalizedRows = this._limitToLast ? rows.reverse() : rows;
+            const rowModels = this.toModels(rows);
+            const normalizedRows = this._limitToLast ? rowModels.reverse() : rowModels;
             this.cache = this.applyWindow(normalizedRows);
             return this.cache;
         });
@@ -297,38 +324,64 @@ class Collection extends Query {
     constructor(tableName, sdk, schemaName = "public") {
         super(tableName, sdk, schemaName);
     }
+    withConverter(converter) {
+        const next = new Collection(this.tableName, this.sdk, this.schemaName);
+        next.filters = [...this.filters];
+        next.sortItems = [...this.sortItems];
+        next._limit = this._limit;
+        next._offset = this._offset;
+        next._limitToLast = this._limitToLast;
+        next.lastTxid = this.lastTxid;
+        next.converter = converter;
+        return next;
+    }
     add(record) {
         return __awaiter(this, void 0, void 0, function* () {
             return this.sdk.data.add.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
-                record,
+                record: this.toWire(record),
             });
         });
     }
     doc(id, idField = "id") {
-        return new Document(this.tableName, id, this.sdk, idField, this.schemaName);
+        return new Document(this.tableName, id, this.sdk, idField, this.schemaName, this.converter);
     }
 }
 exports.Collection = Collection;
 class Document {
-    constructor(tableName, id, sdk, idField = "id", schemaName = "public") {
+    constructor(tableName, id, sdk, idField = "id", schemaName = "public", converter = null) {
         this.tableName = tableName;
         this.id = id;
         this.sdk = sdk;
         this.idField = idField;
         this.schemaName = schemaName;
+        this.converter = converter;
         this.cache = null;
         this.lastTxid = null;
     }
+    withConverter(converter) {
+        return new Document(this.tableName, this.id, this.sdk, this.idField, this.schemaName, converter);
+    }
+    toModel(data) {
+        if (!this.converter)
+            return data;
+        return this.converter.fromFirestore(data);
+    }
+    toWire(model) {
+        if (!this.converter || !this.converter.toFirestore)
+            return model;
+        return this.converter.toFirestore(model);
+    }
     get() {
         return __awaiter(this, void 0, void 0, function* () {
-            return this.sdk.data.get.query({
+            const row = yield this.sdk.data.get.query({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
                 id: this.id,
                 idField: this.idField,
             });
+            return row ? this.toModel(row) : null;
         });
     }
     onSnapshot(callback) {
@@ -356,7 +409,7 @@ class Document {
                         return;
                     if (event.txid)
                         this.lastTxid = event.txid;
-                    const currentRecord = event.record;
+                    const currentRecord = this.toModel(event.record);
                     const oldRecord = event.old_record;
                     const matchesId = (currentRecord && currentRecord[this.idField] == this.id) ||
                         (oldRecord && oldRecord[this.idField] == this.id);
@@ -386,36 +439,39 @@ class Document {
     }
     update(record) {
         return __awaiter(this, void 0, void 0, function* () {
-            return this.sdk.data.update.mutate({
+            const updated = yield this.sdk.data.update.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
                 id: this.id,
                 idField: this.idField,
-                record,
+                record: this.toWire(record),
             });
+            return updated ? this.toModel(updated) : null;
         });
     }
     delete() {
         return __awaiter(this, void 0, void 0, function* () {
-            return this.sdk.data.delete.mutate({
+            const deleted = yield this.sdk.data.delete.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
                 id: this.id,
                 idField: this.idField,
             });
+            return deleted ? this.toModel(deleted) : null;
         });
     }
     set(record_1) {
         return __awaiter(this, arguments, void 0, function* (record, options = {}) {
             var _a;
-            return this.sdk.data.set.mutate({
+            const setRow = yield this.sdk.data.set.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
                 id: this.id,
                 idField: this.idField,
-                record,
+                record: this.toWire(record),
                 merge: (_a = options.merge) !== null && _a !== void 0 ? _a : false,
             });
+            return setRow ? this.toModel(setRow) : null;
         });
     }
 }

@@ -140,6 +140,32 @@ await userRef.set(
 );
 ```
 
+**範例：`withConverter()` 型別與欄位映射**
+
+```typescript
+const userConverter = {
+  fromFirestore(row) {
+    return {
+      id: row.id,
+      displayName: row.name,
+      upperRole: String(row.role || "").toUpperCase(),
+    };
+  },
+  toFirestore(model) {
+    return {
+      name: model.displayName,
+      role: String(model.upperRole || "").toLowerCase(),
+    };
+  },
+};
+
+const users = sdk.collection("users").withConverter(userConverter);
+const list = await users.get(); // 已轉為 displayName/upperRole
+
+const ref = users.doc(1);
+await ref.update({ displayName: "Ray Bird", upperRole: "EDITOR" });
+```
+
 **範例：使用伺服器特殊值 (FieldValue)**
 
 SDK 支援多種伺服器端原子操作，確保資料的一致性與效能。
@@ -258,4 +284,5 @@ latestImportant.onSnapshot(({ record: rows }) => {
 
 - **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `in`, `not-in`, `array-contains`, `array-contains-any`。
 - **分頁語法**：`limit(n)`、`offset(n)`、`limitToLast(n)`（需搭配 `orderBy`）。
+- **模型映射**：支援 `withConverter()`，可集中處理欄位映射與型別轉換。
 - **即時過濾**：當資料庫發生異動時，SDK 會在客戶端自動判斷該變更是否符合您的查詢條件，並動態更新結果集。
