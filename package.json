@@ -1,6 +1,6 @@
 {
   "name": "pg-trigger-manager",
-  "version": "0.0.2",
+  "version": "1.1.0",
   "description": "",
   "scripts": {
     "start": "env-cmd nodemon ./src/server/index.ts",

@@ -63,6 +63,15 @@ export interface FirestoreDataConverter<TModel = any> {
   toFirestore?(model: Partial<TModel>): any;
 }
 
+export interface RelationConfig {
+  name: string;
+  targetTable: string;
+  localField: string;
+  targetField: string;
+  schemaName?: string;
+  type: "1:1" | "1:N";
+}
+
 /**
  * FieldValue - 支援特殊伺服器端值的處理
  */
@@ -126,6 +135,7 @@ class LocalEventBus {
 export class Query<T = any> {
   protected filters: Filter[] = [];
   protected sortItems: SortItem[] = [];
+  protected _include: Record<string, any> | null = null;
   protected _limit: number = 100;
   protected _offset: number = 0;
   protected _limitToLast: boolean = false;
@@ -134,6 +144,7 @@ export class Query<T = any> {
   protected lastTxid: string | number | null = null;
   protected cache: T[] = [];
   protected converter: FirestoreDataConverter<T> | null = null;
+  protected relations: RelationConfig[] = [];
 
   constructor(
     protected tableName: string,
@@ -143,6 +154,12 @@ export class Query<T = any> {
 
   where(field: string, operator: FilterOperator, value: any): Query<T> {
     this.filters.push({ field, operator, value });
+    return this;
+  }
+
+  include(name: string, config: any): Query<T> {
+    if (!this._include) this._include = {};
+    this._include[name] = config;
     return this;
   }
 
@@ -192,6 +209,7 @@ export class Query<T = any> {
     const next = new Query<U>(this.tableName, this.sdk, this.schemaName);
     (next as any).filters = [...this.filters];
     (next as any).sortItems = [...this.sortItems];
+    (next as any)._include = this._include ? { ...this._include } : null;
     (next as any)._limit = this._limit;
     (next as any)._offset = this._offset;
     (next as any)._limitToLast = this._limitToLast;
@@ -221,7 +239,8 @@ export class Query<T = any> {
   protected getStorageKey(): string {
     const filterStr = JSON.stringify(this.filters);
     const sortStr = JSON.stringify(this.sortItems);
-    return `query:${this.schemaName}.${this.tableName}:${filterStr}:${sortStr}:${this._limit}:${this._offset}`;
+    const relStr = JSON.stringify(this.relations);
+    return `query:${this.schemaName}.${this.tableName}:${filterStr}:${sortStr}:${relStr}:${this._limit}:${this._offset}`;
   }
 
   /**
@@ -353,6 +372,33 @@ export class Query<T = any> {
     return cursorApplied.slice(start, start + this._limit);
   }
 
+  protected async resolveRelations(records: T[]): Promise<T[]> {
+    if (this.relations.length === 0 || records.length === 0) return records;
+
+    const resolved = await Promise.all(records.map(async (record: any) => {
+      const updates: any = {};
+      for (const rel of this.relations) {
+        const val = record[rel.localField];
+        if (val === undefined || val === null) {
+          updates[rel.name] = rel.type === "1:1" ? null : [];
+          continue;
+        }
+
+        if (rel.type === "1:1") {
+          const doc = this.sdk.doc(rel.targetTable, val, rel.targetField, rel.schemaName);
+          updates[rel.name] = await doc.get();
+        } else {
+          const query = this.sdk.collection(rel.targetTable, rel.schemaName)
+            .where(rel.targetField, "==", val);
+          updates[rel.name] = await query.get();
+        }
+      }
+      return { ...record, ...updates };
+    }));
+
+    return resolved;
+  }
+
   async onSnapshot(callback: (snapshot: DbEvent<T[]>) => void) {
     this.ensureQueryReady();
 
@@ -399,7 +445,9 @@ export class Query<T = any> {
       const normalizedInitial = this._limitToLast
         ? initialRows.reverse()
         : initialRows;
-      this.cache = this.applyWindow(normalizedInitial as T[]);
+      
+      // 展開關聯
+      this.cache = await this.resolveRelations(this.applyWindow(normalizedInitial as T[]));
 
       callback({
         timestamp: new Date().toISOString(),
@@ -419,7 +467,7 @@ export class Query<T = any> {
     }
 
     // 2. 訂閱變更並自動維護快取 (含過濾邏輯)
-    const handleEvent = (event: any, isOptimistic: boolean = false) => {
+    const handleEvent = async (event: any, isOptimistic: boolean = false) => {
       if (
         event.table !== this.tableName ||
         (event.schema && event.schema !== this.schemaName)
@@ -469,6 +517,9 @@ export class Query<T = any> {
       if (changed) {
         this.cache = this.applyWindow(this.cache);
         
+        // 重新解析關聯
+        this.cache = await this.resolveRelations(this.cache);
+
         // 更新本地持久化快取 (非樂觀更新時)
         if (!isOptimistic && this.sdk.persistence) {
           this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => {});
@@ -634,6 +685,7 @@ export class Collection<T = any> extends Query<T> {
       idField,
       this.schemaName,
       this.converter,
+      this.relations
     );
   }
 }
@@ -641,6 +693,7 @@ export class Collection<T = any> extends Query<T> {
 export class Document<T = any> {
   private cache: T | null = null;
   private lastTxid: string | number | null = null;
+  private _include: Record<string, any> | null = null;
 
   constructor(
     private tableName: string,
@@ -651,8 +704,14 @@ export class Document<T = any> {
     private converter: FirestoreDataConverter<T> | null = null,
   ) {}
 
+  include(name: string, config: any): Document<T> {
+    if (!this._include) this._include = {};
+    this._include[name] = config;
+    return this;
+  }
+
   withConverter<U = any>(converter: FirestoreDataConverter<U>): Document<U> {
-    return new Document<U>(
+    const next = new Document<U>(
       this.tableName,
       this.id,
       this.sdk,
@@ -660,6 +719,8 @@ export class Document<T = any> {
       this.schemaName,
       converter,
     );
+    (next as any)._include = this._include ? { ...this._include } : null;
+    return next;
   }
 
   private toModel(data: any): T {
@@ -682,12 +743,18 @@ export class Document<T = any> {
       schemaName: this.schemaName,
       id: this.id,
       idField: this.idField,
+      include: this._include,
     });
     return row ? this.toModel(row) : null;
   }
 
   async exists(): Promise<boolean> {
-    const row = await this.get();
+    const row = await this.sdk.client.data.get.query({
+      tableName: this.tableName,
+      schemaName: this.schemaName,
+      id: this.id,
+      idField: this.idField,
+    });
     return row !== null;
   }
 
@@ -740,7 +807,7 @@ export class Document<T = any> {
       );
     }
 
-    const handleEvent = (event: any, isOptimistic: boolean = false) => {
+    const handleEvent = async (event: any, isOptimistic: boolean = false) => {
       if (
         event.table !== this.tableName ||
         (event.schema && event.schema !== this.schemaName)
@@ -759,6 +826,9 @@ export class Document<T = any> {
       if (matchesId) {
         this.cache = event.action === "delete" ? null : currentRecord;
         
+        // 展開關聯
+        this.cache = await this.resolveRelations(this.cache);
+
         // 更新持久化快取 (非樂觀更新時)
         if (!isOptimistic && this.sdk.persistence) {
           if (event.action === "delete") {

@@ -280,6 +280,27 @@ sdk.collection('posts').onSnapshot((snapshot) => {
 });
 ```
 
+**範例：關聯數據展開 (Relation Embedding)**
+
+SDK 支援在讀取時自動展開關聯資料（1:1 或 1:N），解決 Firestore 難以處理 Join 的痛點。
+
+```typescript
+const query = sdk.collection('posts')
+  .where('status', '==', 'published')
+  // 展開 1:1 關聯 (作者)
+  .withRelation('author', 'users', 'author_id')
+  // 展開 1:N 關聯 (留言)
+  .withRelation('comments', 'comments', 'id', 'post_id', '1:N');
+
+query.onSnapshot(({ record: posts }) => {
+  posts.forEach(post => {
+    console.log(`文章：${post.title}`);
+    console.log(`作者：${post.author.name}`);
+    console.log(`留言數：${post.comments.length}`);
+  });
+});
+```
+
 ### 可靠性與追補機制
 
 SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid) 與後端的 `audit_log` 機制，當您的應用程式重新連線時，SDK 會自動請求補發所有遺漏的異動事件。

@@ -70,3 +70,25 @@
   - [x] 補齊 cursor 視窗、count、FieldValue、withConverter 範例。
 - [x] **Phase 3: 導覽同步**
   - [x] 更新 `README.md` 文件快速入口，串接 docs 站內頁面。
+
+---
+
+## 📋 任務清單：關聯數據展開 (Relation Embedding)
+
+## 🎯 目標
+
+實作自動化的關聯資料解析機制，支援 `1:1` 與 `1:N` 的展開，減少前端手動處理 Join 的負擔。
+
+## 🛠 任務分解
+
+- [x] **Phase 1: SDK 語法實作**
+  - [x] 新增 `withRelation(name, table, local, target, type)`。
+- [x] **Phase 2: 解析邏輯開發**
+  - [x] 在 `Query` 與 `Document` 實作遞迴式的 `resolveRelations`。
+  - [x] 整合 `onSnapshot` 訂閱事件連動更新。
+- [x] **Phase 3: 穩定性優化**
+  - [x] 修正代碼語法與拼字錯誤。
+  - [x] 整合持久化快取（處理展開後的資料儲存）。
+- [x] **Phase 4: 文件同步**
+  - [x] 更新 `README.md` 範例。
+  - [x] 更新 `ROADMAP.md` 狀態。
