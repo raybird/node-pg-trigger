@@ -68,9 +68,10 @@
   - [x] 支援單一服務實例監聽多個 Schema。
   - [x] SDK 支援 `collection('table', 'schema')` 指定命名空間。
 - [x] **關聯語意 DSL v0.2 規格化**：
-  - [x] 支援 `1:1`、`1:N` 關聯自動展開。
-  - [x] SDK 實作 `withRelation()` 鏈式語法。
-  - [x] 支援 `subscribe` 查詢中的遞迴關聯解析。
+  - [x] 支援 `1:1`、`1:N` 伺服器端 JOIN 與 `JSON_AGG` 展開。
+  - [x] SDK 實作 `include()` 鏈式語法替代舊有的 `withRelation()`。
+  - [x] 支援單次請求中展開多個不同關聯。
+  - [x] 教學範例與文件更新完成。
 - [ ] **中介層優化**：
   - 引入 Redis 作為事件總線 (Event Bus)，以支援水平擴展的後端節點。
 

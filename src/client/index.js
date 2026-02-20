@@ -13,6 +13,7 @@ exports.VanillaFirestore = exports.Transaction = exports.WriteBatch = exports.Do
 exports.createSdk = createSdk;
 const client_1 = require("@trpc/client");
 const client_2 = require("@trpc/client");
+const persistence_1 = require("./persistence");
 /**
  * FieldValue - 支援特殊伺服器端值的處理
  */
@@ -67,6 +68,7 @@ class Query {
         this.schemaName = schemaName;
         this.filters = [];
         this.sortItems = [];
+        this._include = null;
         this._limit = 100;
         this._offset = 0;
         this._limitToLast = false;
@@ -75,9 +77,16 @@ class Query {
         this.lastTxid = null;
         this.cache = [];
         this.converter = null;
+        this.relations = [];
     }
     where(field, operator, value) {
         this.filters.push({ field, operator, value });
+        return this;
+    }
+    include(name, config) {
+        if (!this._include)
+            this._include = {};
+        this._include[name] = config;
         return this;
     }
     orderBy(field, direction = "asc") {
@@ -118,6 +127,7 @@ class Query {
         const next = new Query(this.tableName, this.sdk, this.schemaName);
         next.filters = [...this.filters];
         next.sortItems = [...this.sortItems];
+        next._include = this._include ? Object.assign({}, this._include) : null;
         next._limit = this._limit;
         next._offset = this._offset;
         next._limitToLast = this._limitToLast;
@@ -140,6 +150,12 @@ class Query {
         if (!this.converter || !this.converter.toFirestore)
             return model;
         return this.converter.toFirestore(model);
+    }
+    getStorageKey() {
+        const filterStr = JSON.stringify(this.filters);
+        const sortStr = JSON.stringify(this.sortItems);
+        const relStr = JSON.stringify(this.relations);
+        return `query:${this.schemaName}.${this.tableName}:${filterStr}:${sortStr}:${relStr}:${this._limit}:${this._offset}`;
     }
     /**
      * 檢查記錄是否符合目前的所有過濾條件 (客戶端過濾)
@@ -258,9 +274,58 @@ class Query {
             return cursorApplied.slice(start);
         return cursorApplied.slice(start, start + this._limit);
     }
+    resolveRelations(records) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.relations.length === 0 || records.length === 0)
+                return records;
+            const resolved = yield Promise.all(records.map((record) => __awaiter(this, void 0, void 0, function* () {
+                const updates = {};
+                for (const rel of this.relations) {
+                    const val = record[rel.localField];
+                    if (val === undefined || val === null) {
+                        updates[rel.name] = rel.type === "1:1" ? null : [];
+                        continue;
+                    }
+                    if (rel.type === "1:1") {
+                        const doc = this.sdk.doc(rel.targetTable, val, rel.targetField, rel.schemaName);
+                        updates[rel.name] = yield doc.get();
+                    }
+                    else {
+                        const query = this.sdk.collection(rel.targetTable, rel.schemaName)
+                            .where(rel.targetField, "==", val);
+                        updates[rel.name] = yield query.get();
+                    }
+                }
+                return Object.assign(Object.assign({}, record), updates);
+            })));
+            return resolved;
+        });
+    }
     onSnapshot(callback) {
         return __awaiter(this, void 0, void 0, function* () {
             this.ensureQueryReady();
+            // 0. 嘗試從本地快取載入
+            if (this.sdk.persistence) {
+                try {
+                    const cached = yield this.sdk.persistence.get(this.getStorageKey());
+                    if (cached && Array.isArray(cached)) {
+                        this.cache = cached;
+                        callback({
+                            timestamp: new Date().toISOString(),
+                            txid: 0,
+                            action: "initial",
+                            schema: this.schemaName,
+                            table: this.tableName,
+                            record: this.cache,
+                            old_record: null,
+                            metadata: { fromCache: true, hasPendingWrites: false },
+                        });
+                    }
+                }
+                catch (err) {
+                    console.warn(`[Persistence] Failed to load cache for ${this.tableName}`, err);
+                }
+            }
             // 1. 獲取初始快照 (帶過濾)
             try {
                 const initialSort = this._limitToLast
@@ -278,7 +343,8 @@ class Query {
                 const normalizedInitial = this._limitToLast
                     ? initialRows.reverse()
                     : initialRows;
-                this.cache = this.applyWindow(normalizedInitial);
+                // 展開關聯
+                this.cache = yield this.resolveRelations(this.applyWindow(normalizedInitial));
                 callback({
                     timestamp: new Date().toISOString(),
                     txid: 0,
@@ -294,7 +360,7 @@ class Query {
                 console.error(`Failed to fetch snapshot for ${this.schemaName}.${this.tableName}:`, err);
             }
             // 2. 訂閱變更並自動維護快取 (含過濾邏輯)
-            const handleEvent = (event, isOptimistic = false) => {
+            const handleEvent = (event_1, ...args_1) => __awaiter(this, [event_1, ...args_1], void 0, function* (event, isOptimistic = false) {
                 if (event.table !== this.tableName ||
                     (event.schema && event.schema !== this.schemaName))
                     return;
@@ -337,9 +403,15 @@ class Query {
                 // 如果快取發生變動，執行回呼
                 if (changed) {
                     this.cache = this.applyWindow(this.cache);
+                    // 重新解析關聯
+                    this.cache = yield this.resolveRelations(this.cache);
+                    // 更新本地持久化快取 (非樂觀更新時)
+                    if (!isOptimistic && this.sdk.persistence) {
+                        this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => { });
+                    }
                     callback(Object.assign(Object.assign({}, event), { record: this.cache, metadata: { fromCache: false, hasPendingWrites: isOptimistic } }));
                 }
-            };
+            });
             const serverSub = this.sdk.client.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
                 onData: (event) => handleEvent(event, false),
                 onError: (err) => {
@@ -479,9 +551,18 @@ class Document {
         this.converter = converter;
         this.cache = null;
         this.lastTxid = null;
+        this._include = null;
+    }
+    include(name, config) {
+        if (!this._include)
+            this._include = {};
+        this._include[name] = config;
+        return this;
     }
     withConverter(converter) {
-        return new Document(this.tableName, this.id, this.sdk, this.idField, this.schemaName, converter);
+        const next = new Document(this.tableName, this.id, this.sdk, this.idField, this.schemaName, converter);
+        next._include = this._include ? Object.assign({}, this._include) : null;
+        return next;
     }
     toModel(data) {
         if (!this.converter)
@@ -493,6 +574,9 @@ class Document {
             return model;
         return this.converter.toFirestore(model);
     }
+    getStorageKey() {
+        return `doc:${this.schemaName}.${this.tableName}:${this.id}`;
+    }
     get() {
         return __awaiter(this, void 0, void 0, function* () {
             const row = yield this.sdk.client.data.get.query({
@@ -500,21 +584,53 @@ class Document {
                 schemaName: this.schemaName,
                 id: this.id,
                 idField: this.idField,
+                include: this._include,
             });
             return row ? this.toModel(row) : null;
         });
     }
     exists() {
         return __awaiter(this, void 0, void 0, function* () {
-            const row = yield this.get();
+            const row = yield this.sdk.client.data.get.query({
+                tableName: this.tableName,
+                schemaName: this.schemaName,
+                id: this.id,
+                idField: this.idField,
+            });
             return row !== null;
         });
     }
     onSnapshot(callback) {
         return __awaiter(this, void 0, void 0, function* () {
+            // 0. 嘗試從本地快取載入
+            if (this.sdk.persistence) {
+                try {
+                    const cached = yield this.sdk.persistence.get(this.getStorageKey());
+                    if (cached) {
+                        this.cache = cached;
+                        callback({
+                            timestamp: new Date().toISOString(),
+                            txid: 0,
+                            action: "initial",
+                            schema: this.schemaName,
+                            table: this.tableName,
+                            record: this.cache,
+                            old_record: null,
+                            metadata: { fromCache: true, hasPendingWrites: false },
+                        });
+                    }
+                }
+                catch (err) {
+                    console.warn(`[Persistence] Failed to load cache for doc ${this.tableName}/${this.id}`, err);
+                }
+            }
             try {
                 const initialDoc = yield this.get();
                 this.cache = initialDoc;
+                // 更新快取 (若來自伺服器)
+                if (this.sdk.persistence && this.cache) {
+                    this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => { });
+                }
                 callback({
                     timestamp: new Date().toISOString(),
                     txid: 0,
@@ -541,6 +657,15 @@ class Document {
                     (oldRecord && oldRecord[this.idField] == this.id);
                 if (matchesId) {
                     this.cache = event.action === "delete" ? null : currentRecord;
+                    // 更新持久化快取 (非樂觀更新時)
+                    if (!isOptimistic && this.sdk.persistence) {
+                        if (event.action === "delete") {
+                            this.sdk.persistence.remove(this.getStorageKey()).catch(() => { });
+                        }
+                        else {
+                            this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => { });
+                        }
+                    }
                     callback(Object.assign(Object.assign({}, event), { record: this.cache, metadata: { fromCache: false, hasPendingWrites: isOptimistic } }));
                 }
             };
@@ -765,10 +890,21 @@ class VanillaFirestore {
         this.url = url;
         this.userId = null;
         this._localEvents = new LocalEventBus();
+        this._persistence = null;
         this.initTrpc();
     }
     get localEvents() {
         return this._localEvents;
+    }
+    get persistence() {
+        return this._persistence;
+    }
+    enablePersistence() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this._persistence)
+                return;
+            this._persistence = new persistence_1.IndexedDBPersistence();
+        });
     }
     initTrpc() {
         const baseUrl = this.url.endsWith("/") ? this.url : `${this.url}/`;

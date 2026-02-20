@@ -685,7 +685,6 @@ export class Collection<T = any> extends Query<T> {
       idField,
       this.schemaName,
       this.converter,
-      this.relations
     );
   }
 }
@@ -807,7 +806,7 @@ export class Document<T = any> {
       );
     }
 
-    const handleEvent = async (event: any, isOptimistic: boolean = false) => {
+    const handleEvent = (event: any, isOptimistic: boolean = false) => {
       if (
         event.table !== this.tableName ||
         (event.schema && event.schema !== this.schemaName)
@@ -825,9 +824,6 @@ export class Document<T = any> {
 
       if (matchesId) {
         this.cache = event.action === "delete" ? null : currentRecord;
-        
-        // 展開關聯
-        this.cache = await this.resolveRelations(this.cache);
 
         // 更新持久化快取 (非樂觀更新時)
         if (!isOptimistic && this.sdk.persistence) {

@@ -26,11 +26,20 @@ const FilterOperator = zod_1.z.enum([
     "in",
     "not-in",
 ]);
+const IncludeSchema = zod_1.z.record(zod_1.z.object({
+    targetTable: zod_1.z.string(),
+    localField: zod_1.z.string(),
+    targetField: zod_1.z.string().optional().default("id"),
+    type: zod_1.z.enum(["1:1", "1:N"]).optional().default("1:1"),
+    schemaName: zod_1.z.string().optional().default("public"),
+    select: zod_1.z.array(zod_1.z.string()).optional()
+}));
 const TableInput = zod_1.z.object({
     tableName: zod_1.z.string().min(1),
     schemaName: zod_1.z.string().optional().default("public"),
     limit: zod_1.z.number().optional().default(100),
     offset: zod_1.z.number().optional().default(0),
+    include: IncludeSchema.optional(),
     where: zod_1.z
         .array(zod_1.z.object({
         field: zod_1.z.string(),
@@ -50,6 +59,7 @@ const DocInput = zod_1.z.object({
     schemaName: zod_1.z.string().optional().default("public"),
     id: zod_1.z.union([zod_1.z.string(), zod_1.z.number()]),
     idField: zod_1.z.string().optional().default("id"),
+    include: IncludeSchema.optional(),
 });
 const WriteInput = zod_1.z.object({
     tableName: zod_1.z.string().min(1),
@@ -266,18 +276,59 @@ function prepareUpdate(record, startParamIndex) {
         lastIndex: currentIndex,
     };
 }
+/**
+ * 輔助函式：構建 SQL INCLUDE (Joins)
+ */
+function buildIncludeClause(include) {
+    if (!include)
+        return { selectParts: [], joinParts: [] };
+    const selectParts = [];
+    const joinParts = [];
+    Object.entries(include).forEach(([alias, config]) => {
+        const { targetTable, localField, targetField, type, schemaName, select } = config;
+        const target = `"${schemaName}"."${targetTable}"`;
+        const cols = select ? select.map((c) => `"${c}"`).join(', ') : '*';
+        if (type === "1:1") {
+            joinParts.push(`
+        LEFT JOIN LATERAL (
+          SELECT json_build_object(${select ? select.map((c) => `'${c}', "${c}"`).join(', ') : 'row_to_json(rel.*)'}) as "${alias}"
+          FROM ${target} rel
+          WHERE rel."${targetField}" = base."${localField}"
+          LIMIT 1
+        ) "${alias}_lat" ON true
+      `);
+            selectParts.push(`"${alias}_lat"."${alias}"`);
+        }
+        else {
+            joinParts.push(`
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(json_agg(row_to_json(rel.*)), '[]'::json) as "${alias}"
+          FROM (
+            SELECT ${cols} FROM ${target} r 
+            WHERE r."${targetField}" = base."${localField}"
+          ) rel
+        ) "${alias}_lat" ON true
+      `);
+            selectParts.push(`"${alias}_lat"."${alias}"`);
+        }
+    });
+    return { selectParts, joinParts };
+}
 exports.dataRouter = (0, trpc_1.router)({
     /**
-     * Query: 獲取資料表中的資料（支援過濾與排序）
+     * Query: 獲取資料表中的資料（支援過濾、排序與關聯展開）
      */
     list: trpc_1.procedure.input(TableInput).query((_a) => __awaiter(void 0, [_a], void 0, function* ({ input, ctx }) {
-        const { tableName, schemaName, limit, offset, where, orderBy } = input;
+        const { tableName, schemaName, limit, offset, where, orderBy, include } = input;
         const { clause: whereClause, params: whereParams } = buildWhereClause(where, 1);
         const orderByClause = buildOrderByClause(orderBy);
+        const { selectParts, joinParts } = buildIncludeClause(include);
         const limitParamIndex = whereParams.length + 1;
         const offsetParamIndex = whereParams.length + 2;
         const sql = `
-        SELECT * FROM "${schemaName}"."${tableName}" 
+        SELECT base.* ${selectParts.length > 0 ? ', ' + selectParts.join(', ') : ''}
+        FROM "${schemaName}"."${tableName}" base
+        ${joinParts.join(' ')}
         ${whereClause} 
         ${orderByClause} 
         LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex};
@@ -305,8 +356,15 @@ exports.dataRouter = (0, trpc_1.router)({
      * Query: 獲取單筆資料
      */
     get: trpc_1.procedure.input(DocInput).query((_a) => __awaiter(void 0, [_a], void 0, function* ({ input, ctx }) {
-        const { tableName, schemaName, id, idField } = input;
-        const sql = `SELECT * FROM "${schemaName}"."${tableName}" WHERE "${idField}" = $1 LIMIT 1;`;
+        const { tableName, schemaName, id, idField, include } = input;
+        const { selectParts, joinParts } = buildIncludeClause(include);
+        const sql = `
+      SELECT base.* ${selectParts.length > 0 ? ', ' + selectParts.join(', ') : ''}
+      FROM "${schemaName}"."${tableName}" base
+      ${joinParts.join(' ')}
+      WHERE base."${idField}" = $1 
+      LIMIT 1;
+    `;
         if (ctx.user) {
             const udb = yield db_1.db.withUser(ctx.user.id);
             try {
