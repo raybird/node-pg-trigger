@@ -280,9 +280,22 @@ const latestImportant = sdk
 latestImportant.onSnapshot(({ record: rows }) => {
   console.log("最後 5 筆事件:", rows);
 });
+
+// 聚合輔助：直接取得目前查詢數量
+const activeCount = await sdk
+  .collection("users")
+  .where("status", "==", "active")
+  .count();
+
+console.log("啟用使用者數量:", activeCount);
+
+// 文件存在性檢查
+const exists = await sdk.doc("users", 1).exists();
+console.log("使用者 #1 是否存在:", exists);
 ```
 
 - **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `in`, `not-in`, `array-contains`, `array-contains-any`。
 - **分頁語法**：`limit(n)`、`offset(n)`、`limitToLast(n)`（需搭配 `orderBy`）。
 - **模型映射**：支援 `withConverter()`，可集中處理欄位映射與型別轉換。
+- **聚合與存在性輔助**：支援 `query.count()` 與 `doc.exists()`。
 - **即時過濾**：當資料庫發生異動時，SDK 會在客戶端自動判斷該變更是否符合您的查詢條件，並動態更新結果集。

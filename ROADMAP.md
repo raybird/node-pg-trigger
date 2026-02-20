@@ -24,9 +24,11 @@
   - [x] `doc.update(data)` 實作。
   - [x] `doc.delete()` 實作。
   - [x] `doc.set(data, { merge })` upsert 與部分欄位合併。
+  - [x] `doc.exists()` 文件存在性檢查。
 - [x] **進階查詢支援 (Querying)**：
   - [x] 實作 `where()`, `orderBy()`, `limit()` 鏈式語法。
   - [x] 補齊 Firestore 風格 `limitToLast()` 查詢窗口（需搭配 `orderBy`）。
+  - [x] 提供 `count()` 查詢聚合輔助。
   - [x] Server 端支援動態 SQL 過濾條件生成。
   - [x] Client 端支援實時事件的條件匹配 (Event Filtering)。
   - [x] 補齊 Firestore 風格集合運算子 `in` / `not-in`。

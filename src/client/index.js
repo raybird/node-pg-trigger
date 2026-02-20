@@ -315,6 +315,12 @@ class Query {
             return this.cache;
         });
     }
+    count() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const rows = yield this.get();
+            return rows.length;
+        });
+    }
 }
 exports.Query = Query;
 /**
@@ -382,6 +388,12 @@ class Document {
                 idField: this.idField,
             });
             return row ? this.toModel(row) : null;
+        });
+    }
+    exists() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const row = yield this.get();
+            return row !== null;
         });
     }
     onSnapshot(callback) {

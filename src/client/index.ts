@@ -401,6 +401,11 @@ export class Query<T = any> {
     this.cache = this.applyWindow(normalizedRows);
     return this.cache;
   }
+
+  async count(): Promise<number> {
+    const rows = await this.get();
+    return rows.length;
+  }
 }
 
 /**
@@ -485,6 +490,11 @@ export class Document<T = any> {
       idField: this.idField,
     });
     return row ? this.toModel(row) : null;
+  }
+
+  async exists(): Promise<boolean> {
+    const row = await this.get();
+    return row !== null;
   }
 
   async onSnapshot(callback: (snapshot: DbEvent<T | null>) => void) {
