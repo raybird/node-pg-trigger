@@ -711,9 +711,9 @@ export class Document<T = any> {
  * WriteBatch - 批量寫入支援
  */
 export class WriteBatch {
-  private operations: any[] = [];
+  protected operations: any[] = [];
 
-  constructor(private sdk: any) {}
+  constructor(protected sdk: any) {}
 
   set<T = any>(
     doc: Document<T>,
@@ -759,6 +759,63 @@ export class WriteBatch {
     if (this.operations.length === 0) return;
     await this.sdk.data.batch.mutate({ operations: this.operations });
     this.operations = [];
+  }
+}
+
+/**
+ * Transaction - 支援「讀取後寫入」的樂觀鎖交易
+ */
+export class Transaction extends WriteBatch {
+  private preconditions = new Map<string, Filter[]>();
+
+  constructor(sdk: any) {
+    super(sdk);
+  }
+
+  async get<T = any>(doc: Document<T>): Promise<T | null> {
+    const data = await doc.get();
+    if (data) {
+      // 建立樂觀鎖前置條件 (基於目前讀取到的欄位值)
+      // 在工業實作中，通常會基於 version 或 updated_at 欄位
+      // 這裡採用全欄位比對以實現「Zero Config」樂觀鎖
+      const filters: Filter[] = Object.entries(data)
+        .filter(([key, val]) => val !== null && typeof val !== "object") // 僅比對基礎型別
+        .map(([key, value]) => ({ field: key, operator: "==", value }));
+      
+      this.preconditions.set(this.getDocKey(doc), filters);
+    }
+    return data;
+  }
+
+  private getDocKey(doc: Document): string {
+    return `${(doc as any).schemaName}.${(doc as any).tableName}.${(doc as any).id}`;
+  }
+
+  set<T = any>(doc: Document<T>, record: Partial<T>, options: SetOptions = {}): Transaction {
+    super.set(doc, record, options);
+    const filters = this.preconditions.get(this.getDocKey(doc));
+    if (filters) {
+      this.operations[this.operations.length - 1].where = filters;
+    }
+    return this;
+  }
+
+  update<T = any>(doc: Document<T>, record: Partial<T>): Transaction {
+    super.update(doc, record);
+    const filters = this.preconditions.get(this.getDocKey(doc));
+    if (filters) {
+      this.operations[this.operations.length - 1].where = filters;
+    }
+    return this;
+  }
+
+  delete(doc: Document): Transaction {
+    super.delete(doc);
+    const filters = this.preconditions.get(this.getDocKey(doc));
+    if (filters) {
+      this.operations[this.operations.length - 1].where = filters;
+    }
+    return this;
   }
 }
 
@@ -831,6 +888,31 @@ export class VanillaFirestore {
 
   batch() {
     return new WriteBatch(this.trpc);
+  }
+
+  async runTransaction<T>(
+    updateFunction: (transaction: Transaction) => Promise<T>,
+    maxRetries: number = 5
+  ): Promise<T> {
+    let retries = 0;
+    while (true) {
+      const transaction = new Transaction(this.trpc);
+      try {
+        const result = await updateFunction(transaction);
+        await transaction.commit();
+        return result;
+      } catch (error: any) {
+        const isConflict = error.message?.includes("Precondition mismatch");
+        if (isConflict && retries < maxRetries) {
+          retries++;
+          console.warn(`🔄 Transaction conflict detected, retrying... (${retries}/${maxRetries})`);
+          // 指數避退增加成功率
+          await new Promise(res => setTimeout(res, Math.random() * 100 * retries));
+          continue;
+        }
+        throw error;
+      }
+    }
   }
 
   collection<T = any>(name: string, schema: string = "public") {

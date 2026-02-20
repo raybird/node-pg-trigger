@@ -113,4 +113,19 @@ console.log('總訂單數：', stats.orderCount);
 console.log('總營收：', stats.totalRevenue);
 </code></pre>
 
+<h2>9. 讀寫交易（Transactions）</h2>
+<p>交易確保了「讀取-修改-寫入」過程的原子性。如果資料在讀取後被修改，交易會自動重試。</p>
+<pre><code>
+await sdk.runTransaction(async (transaction) => {
+    const docRef = sdk.doc('counters', 'likes');
+    
+    // 讀取最新值
+    const doc = await transaction.get(docRef);
+    const newVal = (doc?.count || 0) + 1;
+    
+    // 寫入回資料庫 (帶有版本校驗)
+    transaction.update(docRef, { count: newVal });
+});
+</code></pre>
+
 <p>更多 API 速查請見：<code>docs/firestore-realtime-cheatsheet.md</code></p>

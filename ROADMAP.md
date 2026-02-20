@@ -42,9 +42,11 @@
   - [x] 實作 `FieldValue.delete()` 欄位刪除。
   - [x] 實作 `FieldValue.arrayUnion()` 與 `FieldValue.arrayRemove()`。
 - [x] **批量寫入 (Write Batches)**：
-  - [x] 實作 `sdk.batch()` 介面。
-  - [x] 支援將多個異動封裝在單一原子交易中執行。
-
+    - [x] 實作 `sdk.batch()` 介面。
+    - [x] 支援將多個異動封裝在單一原子交易中執行。
+- [x] **讀寫交易 (Transactions)**：
+    - [x] 實作 `sdk.runTransaction()` 介面。
+    - [x] 支援樂觀鎖 (Optimistic Locking) 與自動衝突重試。
 ## 🔒 階段二：安全性與可靠性 (Completed)
 
 - [x] **連線恢復機制**：

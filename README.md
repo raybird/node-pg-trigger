@@ -225,6 +225,27 @@ batch.set(userRef, { status: "active" }, { merge: true });
 await batch.commit();
 ```
 
+**範例：讀寫交易 (Transactions)**
+
+交易允許您執行「讀取後寫入」的原子操作。如果資料在讀取與寫入之間被他人修改，交易會自動重試。
+
+```typescript
+await sdk.runTransaction(async (transaction) => {
+  const userRef = sdk.doc('users', 'raybird');
+  
+  // 1. 讀取資料 (會自動紀錄版本快照)
+  const user = await transaction.get(userRef);
+  
+  if (!user) throw new Error('User not found');
+  
+  // 2. 基於讀取到的資料進行運算
+  const newPoints = (user.points || 0) + 10;
+  
+  // 3. 寫入變更 (會自動執行樂觀鎖校驗)
+  transaction.update(userRef, { points: newPoints });
+});
+```
+
 ### 可靠性與追補機制
 
 SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid) 與後端的 `audit_log` 機制，當您的應用程式重新連線時，SDK 會自動請求補發所有遺漏的異動事件。
