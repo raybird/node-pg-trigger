@@ -1,19 +1,95 @@
 <h1>💎 SDK 使用指南</h1>
 <p>我們的 SDK 提供了一套極簡的介面來與資料庫互動。</p>
+
+<h2>1. 建立 SDK</h2>
 <pre><code>
 import { createSdk } from './client';
 const sdk = createSdk('http://localhost:5000');
+</code></pre>
 
-// 訂閱資料
-sdk.collection('users').onSnapshot(({ action, record }) => {
+<h2>2. 即時訂閱（Collection）</h2>
+<pre><code>
+const unsubscribe = await sdk
+  .collection('users')
+  .onSnapshot(({ action, record }) => {
     console.log('異動類型：', action);
     console.log('最新資料：', record);
+  });
+
+// 離開頁面時建議解除訂閱
+unsubscribe();
+</code></pre>
+
+<h2>3. valueChanges / subscribe 別名</h2>
+<pre><code>
+await sdk.collection('users').valueChanges((rows) => {
+  console.log('只有資料本體：', rows);
 });
 
-// 使用伺服器端時間戳記
-import { FieldValue } from './client';
-await sdk.collection('posts').add({
-    title: 'New Post',
-    createdAt: FieldValue.serverTimestamp()
+await sdk.collection('users').subscribe(({ action, record }) => {
+  console.log('subscribe 別名：', action, record);
 });
 </code></pre>
+
+<h2>4. 文件操作（Document）</h2>
+<pre><code>
+const userRef = sdk.doc('users', 1);
+
+const exists = await userRef.exists();
+if (exists) {
+  await userRef.update({ name: 'Ray Bird' });
+}
+
+await userRef.set({ status: 'active' }, { merge: true });
+await userRef.delete();
+</code></pre>
+
+<h2>5. 查詢與 cursor 視窗</h2>
+<pre><code>
+const rows = await sdk
+  .collection('users')
+  .where('status', '==', 'active')
+  .orderBy('created_at', 'asc')
+  .startAfter('2026-02-20T00:00:00.000Z')
+  .endAt('2026-02-20T23:59:59.999Z')
+  .limit(20)
+  .get();
+
+const count = await sdk
+  .collection('users')
+  .where('status', '==', 'active')
+  .count();
+</code></pre>
+
+<h2>6. FieldValue 伺服器原子操作</h2>
+<pre><code>
+import { FieldValue } from './client';
+
+await sdk.collection('posts').add({
+  title: 'New Post',
+  createdAt: FieldValue.serverTimestamp(),
+});
+
+await sdk.doc('posts', 1).update({
+  views: FieldValue.increment(1),
+  tags: FieldValue.arrayUnion('news'),
+});
+</code></pre>
+
+<h2>7. withConverter 欄位映射</h2>
+<pre><code>
+const userConverter = {
+  fromFirestore(row) {
+    return { id: row.id, displayName: row.name };
+  },
+  toFirestore(model) {
+    return { name: model.displayName };
+  },
+};
+
+const users = sdk.collection('users').withConverter(userConverter);
+const list = await users.get();
+console.log(list[0].displayName);
+</code></pre>
+
+<p>更多 API 速查請見：<code>docs/firestore-realtime-cheatsheet.md</code></p>

@@ -51,3 +51,22 @@
 - [x] **Phase 3: 文件同步**
   - [x] 更新 `README.md` 查詢範例與語法清單。
   - [x] 更新 `docs/firestore-realtime-cheatsheet.md`。
+
+---
+
+## 📋 任務清單：文件站教學細節補強
+
+## 🎯 目標
+
+補強 docs 站內的安裝與 SDK 教學密度，降低第一次接入時的卡點與排查成本。
+
+## 🛠 任務分解
+
+- [x] **Phase 1: 安裝文件補齊**
+  - [x] 補充前置需求、最小資料表與快速驗證流程。
+  - [x] 增加常見問題排查（事件、RLS、WebSocket）。
+- [x] **Phase 2: SDK 教學擴充**
+  - [x] 補齊 onSnapshot / valueChanges / subscribe / Document CRUD。
+  - [x] 補齊 cursor 視窗、count、FieldValue、withConverter 範例。
+- [x] **Phase 3: 導覽同步**
+  - [x] 更新 `README.md` 文件快速入口，串接 docs 站內頁面。

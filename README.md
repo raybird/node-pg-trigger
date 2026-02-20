@@ -14,6 +14,8 @@
 - SDK 即時訂閱/查詢 API 速查：`docs/firestore-realtime-cheatsheet.md`
 - 進階查詢運算子：`docs/firestore-query-operators.md`
 - `set(..., { merge: true })` 語意：`docs/firestore-set-merge.md`
+- 文件站安裝配置：`docs/docs/installation.html`
+- 文件站 SDK 教學：`docs/docs/sdk-usage.html`
 
 ## 🚀 快速開始
 
