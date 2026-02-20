@@ -307,9 +307,12 @@ query.onSnapshot(({ record: posts }) => {
 
 ```typescript
 // 獲取使用者 'raybird' 的所有文章
-// 等價於 sdk.collection('posts').where('user_id', '==', 'raybird')
 const userPosts = sdk.doc('users', 'raybird').collection('posts');
 const posts = await userPosts.get();
+
+// 自動生成 ID 並新增至子集合
+const newPostRef = sdk.doc('users', 'raybird').collection('posts').doc();
+await newPostRef.set({ title: 'New Post' });
 ```
 
 **範例：集合群組 (Collection Groups)**

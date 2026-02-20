@@ -7,6 +7,7 @@ import {
 import { createWSClient } from "@trpc/client";
 import type { AppRouter } from "../server/router";
 import { PersistenceProvider, IndexedDBPersistence } from "./persistence";
+import { v4 as uuidv4 } from "uuid";
 
 export interface SnapshotMetadata {
   /**
@@ -61,6 +62,15 @@ export interface SetOptions {
 export interface FirestoreDataConverter<TModel = any> {
   fromFirestore(data: any): TModel;
   toFirestore?(model: Partial<TModel>): any;
+}
+
+export interface RelationConfig {
+  name: string;
+  targetTable: string;
+  localField: string;
+  targetField: string;
+  schemaName?: string;
+  type: "1:1" | "1:N";
 }
 
 /**
@@ -149,7 +159,7 @@ export class Query<T = any> {
 
   /**
    * include - 展開關聯資料 (伺服器端 JOIN)
-   * @param name 欄位別名
+   * @param nameOrSpec 欄位別名或完整的規格物件
    * @param config { targetTable, localField, targetField, type: '1:1'|'1:N', schemaName, select }
    */
   include(nameOrSpec: string | Record<string, any>, config?: any): Query<T> {
@@ -378,8 +388,6 @@ export class Query<T = any> {
   protected async patchRelations(record: any): Promise<T> {
     if (!this._include || !record) return record;
 
-    // 這裡我們直接調用一次 get() 來獲取包含關聯的完整視圖
-    // 未來可優化為僅抓取缺少的關聯項
     const fullRecord = await this.sdk.doc(this.tableName, record.id, "id", this.schemaName)
       .include(this._include)
       .get();
@@ -623,18 +631,6 @@ export const minimum = (field: string) => ({ type: "min", field });
 export const maximum = (field: string) => ({ type: "max", field });
 
 /**
- * 內部輔助：產生隨機 ID (模擬 Firestore 20 字元字串)
- */
-function autoId(): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let id = "";
-  for (let i = 0; i < 20; i++) {
-    id += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return id;
-}
-
-/**
  * Collection 繼承自 Query
  */
 export class Collection<T = any> extends Query<T> {
@@ -665,9 +661,6 @@ export class Collection<T = any> extends Query<T> {
     return `${this.schemaName}/${this.tableName}`;
   }
 
-  /**
-   * add - 新增資料並回傳 Document 參考
-   */
   async add(record: Partial<T>): Promise<Document<T>> {
     const wireData = this.toWire(record);
 
@@ -689,15 +682,11 @@ export class Collection<T = any> extends Query<T> {
       record: wireData,
     });
 
-    // 回傳文件參考 (假設主鍵欄位名稱一致，預設為 id)
     return this.doc(result.id || (result as any).id);
   }
 
-  /**
-   * doc - 獲取文件參考 (若未提供 ID 則自動生成)
-   */
   doc(id?: string | number, idField: string = "id"): Document<T> {
-    const finalId = id ?? autoId();
+    const finalId = id ?? uuidv4();
     return new Document<T>(
       this.tableName,
       finalId,
@@ -723,9 +712,20 @@ export class Document<T = any> {
     private converter: FirestoreDataConverter<T> | null = null,
   ) {}
 
+  get id(): string | number {
+    return this._id;
+  }
+
+  get path(): string {
+    return `${this.schemaName}/${this.tableName}/${this._id}`;
+  }
+
+  get parent(): Collection<T> {
+    return new Collection<T>(this.tableName, this.sdk, this.schemaName, this.converter);
+  }
+
   /**
    * collection - 模擬子集合語法
-   * 自動以目前文件的 ID 作為外鍵過濾條件
    */
   collection<U = any>(name: string, foreignKey: string = `${this.tableName.slice(0, -1)}_id`): Query<U> {
     return this.sdk.collection<U>(name, this.schemaName)
@@ -753,18 +753,6 @@ export class Document<T = any> {
     );
     (next as any)._include = this._include ? { ...this._include } : null;
     return next;
-  }
-
-  get id(): string | number {
-    return this._id;
-  }
-
-  get path(): string {
-    return `${this.schemaName}/${this.tableName}/${this._id}`;
-  }
-
-  get parent(): Collection<T> {
-    return new Collection<T>(this.tableName, this.sdk, this.schemaName, this.converter);
   }
 
   private toModel(data: any): T {

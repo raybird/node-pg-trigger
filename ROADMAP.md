@@ -18,7 +18,8 @@
   - [x] `withConverter()` 模型映射，支援 from/to Firestore 欄位轉換。
   - [x] SDK Realtime Cheatsheet 文件，集中整理常用 API 與解除訂閱模式。
   - [x] 文件站安裝/SDK 教學細節化，補齊前置需求、排查與 cursor/FieldValue 範例。
-  - [x] **參考導航與 ID 生成**：實作 `doc()` 自動生成識別碼，以及 `id` / `path` / `parent` 屬性導航。
+  - [x] **參考導航與 ID 生成**：實作 `doc()` 自動生成識別碼 (UUID)，以及 `id` / `path` / `parent` 屬性導航。
+  - [x] **新增資料返回參考**：`collection.add()` 現在回傳 `Document` 參考而非原始資料。
 - [x] **自動快取與補丁 (Client-side Caching)**：
   - [x] 前端自動獲取初始快照 (Initial Snapshot Fetching)。
   - [x] 接收到變更事件時自動維護 Local State 並回傳完整快照。
