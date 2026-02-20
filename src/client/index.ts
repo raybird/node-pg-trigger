@@ -467,10 +467,48 @@ export class Query<T = any> {
   }
 
   async count(): Promise<number> {
-    const rows = await this.get();
-    return rows.length;
+    const result = await this.sdk.data.aggregate.query({
+      tableName: this.tableName,
+      schemaName: this.schemaName,
+      where: this.filters,
+      aggregations: [{ type: "count", alias: "count" }],
+    });
+    return Number(result.count);
+  }
+
+  async aggregate(
+    spec: Record<string, { type: string; field?: string }>,
+  ): Promise<Record<string, any>> {
+    const aggregations = Object.entries(spec).map(([alias, s]) => ({
+      type: s.type as any,
+      field: s.field,
+      alias,
+    }));
+
+    const result = await this.sdk.data.aggregate.query({
+      tableName: this.tableName,
+      schemaName: this.schemaName,
+      where: this.filters,
+      aggregations,
+    });
+
+    // 將結果中的數值字串轉為 Number
+    const finalResult: Record<string, any> = {};
+    for (const [key, value] of Object.entries(result)) {
+      finalResult[key] = value !== null ? Number(value) : null;
+    }
+    return finalResult;
   }
 }
+
+/**
+ * 聚合輔助函式 (Firestore-like)
+ */
+export const count = () => ({ type: "count" });
+export const sum = (field: string) => ({ type: "sum", field });
+export const average = (field: string) => ({ type: "avg", field });
+export const minimum = (field: string) => ({ type: "min", field });
+export const maximum = (field: string) => ({ type: "max", field });
 
 /**
  * Collection 繼承自 Query

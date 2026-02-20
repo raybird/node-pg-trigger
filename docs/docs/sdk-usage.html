@@ -92,4 +92,25 @@ const list = await users.get();
 console.log(list[0].displayName);
 </code></pre>
 
+<h2>8. 聚合查詢（Aggregation）</h2>
+<p>提供高效的伺服器端統計功能，無需拉取大量原始資料即可獲取結果。</p>
+<pre><code>
+import { count, sum, average } from './client';
+
+// 獲取總數 (Server-side COUNT)
+const total = await sdk.collection('users').count();
+
+// 複雜聚合 (Server-side SUM/AVG)
+const stats = await sdk.collection('orders')
+  .where('status', '==', 'shipped')
+  .aggregate({
+    orderCount: count(),
+    totalRevenue: sum('amount'),
+    avgAmount: average('amount')
+  });
+
+console.log('總訂單數：', stats.orderCount);
+console.log('總營收：', stats.totalRevenue);
+</code></pre>
+
 <p>更多 API 速查請見：<code>docs/firestore-realtime-cheatsheet.md</code></p>

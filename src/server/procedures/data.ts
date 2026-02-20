@@ -76,6 +76,27 @@ const BatchInput = z.object({
   ),
 });
 
+const AggregateInput = z.object({
+  tableName: z.string().min(1),
+  schemaName: z.string().optional().default("public"),
+  where: z
+    .array(
+      z.object({
+        field: z.string(),
+        operator: FilterOperator,
+        value: z.any(),
+      }),
+    )
+    .optional(),
+  aggregations: z.array(
+    z.object({
+      type: z.enum(["count", "sum", "avg", "min", "max"]),
+      field: z.string().optional(),
+      alias: z.string(),
+    }),
+  ),
+});
+
 /**
  * 輔助函式：構建 SQL WHERE 子句
  */
@@ -309,6 +330,61 @@ export const dataRouter = router({
 
     const result = await db.query(sql, [id]);
     return result.rows[0] || null;
+  }),
+
+  /**
+   * Query: 聚合查詢 (Count, Sum, Avg, Min, Max)
+   */
+  aggregate: procedure.input(AggregateInput).query(async ({ input, ctx }) => {
+    const { tableName, schemaName, where, aggregations } = input;
+
+    const { clause: whereClause, params: whereParams } = buildWhereClause(
+      where,
+      1,
+    );
+
+    const aggParts = aggregations.map((agg) => {
+      const field = agg.field ? `"${agg.field}"` : "*";
+      switch (agg.type) {
+        case "count":
+          return `COUNT(${field}) AS "${agg.alias}"`;
+        case "sum":
+          return `SUM(${field}) AS "${agg.alias}"`;
+        case "avg":
+          return `AVG(${field}) AS "${agg.alias}"`;
+        case "min":
+          return `MIN(${field}) AS "${agg.alias}"`;
+        case "max":
+          return `MAX(${field}) AS "${agg.alias}"`;
+        default:
+          throw new Error(`Unsupported aggregation type: ${agg.type}`);
+      }
+    });
+
+    const sql = `
+      SELECT ${aggParts.join(", ")}
+      FROM "${schemaName}"."${tableName}"
+      ${whereClause};
+    `;
+
+    if (ctx.user) {
+      const udb = await db.withUser(ctx.user.id);
+      try {
+        const result = await udb.query(sql, whereParams);
+        await udb.commit();
+        return result.rows[0];
+      } catch (error: any) {
+        await udb.rollback();
+        throw new Error(
+          `RLS Aggregate error for '${schemaName}.${tableName}': ${error.message}`,
+        );
+      } finally {
+        udb.release();
+      }
+    }
+
+    const result = await db.query(sql, whereParams);
+    return result.rows[0];
   }),
 
   /**
