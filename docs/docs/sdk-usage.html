@@ -153,4 +153,22 @@ const list = await userPosts.get();
 const allComments = await sdk.collectionGroup('comments').get();
 </code></pre>
 
+<h2>12. 參考與導航（References & Navigation）</h2>
+<p>SDK 提供強大的屬性來協助您管理資源定位與導航。</p>
+<pre><code>
+// 1. 自動生成 ID
+const newDocRef = sdk.collection('users').doc();
+console.log('生成的 ID：', newDocRef.id);
+
+// 2. add() 傳回文件參考
+const ref = await sdk.collection('posts').add({ title: 'Hello' });
+console.log('新文章路徑：', ref.path);
+
+// 3. 屬性導航
+const userRef = sdk.doc('users', 'raybird');
+console.log(userRef.id);   // 'raybird'
+console.log(userRef.path); // 'public/users/raybird'
+const parentCol = userRef.parent; // 返回 Collection 物件
+</code></pre>
+
 <p>更多 API 速查請見：<code>docs/firestore-realtime-cheatsheet.md</code></p>

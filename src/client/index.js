@@ -77,16 +77,25 @@ class Query {
         this.lastTxid = null;
         this.cache = [];
         this.converter = null;
-        this.relations = [];
     }
     where(field, operator, value) {
         this.filters.push({ field, operator, value });
         return this;
     }
-    include(name, config) {
-        if (!this._include)
-            this._include = {};
-        this._include[name] = config;
+    /**
+     * include - 展開關聯資料 (伺服器端 JOIN)
+     * @param name 欄位別名
+     * @param config { targetTable, localField, targetField, type: '1:1'|'1:N', schemaName, select }
+     */
+    include(nameOrSpec, config) {
+        if (typeof nameOrSpec === "string") {
+            if (!this._include)
+                this._include = {};
+            this._include[nameOrSpec] = config;
+        }
+        else {
+            this._include = Object.assign(Object.assign({}, (this._include || {})), nameOrSpec);
+        }
         return this;
     }
     orderBy(field, direction = "asc") {
@@ -154,8 +163,8 @@ class Query {
     getStorageKey() {
         const filterStr = JSON.stringify(this.filters);
         const sortStr = JSON.stringify(this.sortItems);
-        const relStr = JSON.stringify(this.relations);
-        return `query:${this.schemaName}.${this.tableName}:${filterStr}:${sortStr}:${relStr}:${this._limit}:${this._offset}`;
+        const incStr = JSON.stringify(this._include);
+        return `query:${this.schemaName}.${this.tableName}:${filterStr}:${sortStr}:${incStr}:${this._limit}:${this._offset}`;
     }
     /**
      * 檢查記錄是否符合目前的所有過濾條件 (客戶端過濾)
@@ -274,31 +283,20 @@ class Query {
             return cursorApplied.slice(start);
         return cursorApplied.slice(start, start + this._limit);
     }
-    resolveRelations(records) {
+    /**
+     * 當接收到即時變更事件時，若該查詢有 include，則需對受影響的記錄重新抓取關聯
+     * 這是因為 trigger 只返回變動的原始行。
+     */
+    patchRelations(record) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (this.relations.length === 0 || records.length === 0)
-                return records;
-            const resolved = yield Promise.all(records.map((record) => __awaiter(this, void 0, void 0, function* () {
-                const updates = {};
-                for (const rel of this.relations) {
-                    const val = record[rel.localField];
-                    if (val === undefined || val === null) {
-                        updates[rel.name] = rel.type === "1:1" ? null : [];
-                        continue;
-                    }
-                    if (rel.type === "1:1") {
-                        const doc = this.sdk.doc(rel.targetTable, val, rel.targetField, rel.schemaName);
-                        updates[rel.name] = yield doc.get();
-                    }
-                    else {
-                        const query = this.sdk.collection(rel.targetTable, rel.schemaName)
-                            .where(rel.targetField, "==", val);
-                        updates[rel.name] = yield query.get();
-                    }
-                }
-                return Object.assign(Object.assign({}, record), updates);
-            })));
-            return resolved;
+            if (!this._include || !record)
+                return record;
+            // 這裡我們直接調用一次 get() 來獲取包含關聯的完整視圖
+            // 未來可優化為僅抓取缺少的關聯項
+            const fullRecord = yield this.sdk.doc(this.tableName, record.id, "id", this.schemaName)
+                .include(this._include)
+                .get();
+            return fullRecord || record;
         });
     }
     onSnapshot(callback) {
@@ -326,7 +324,7 @@ class Query {
                     console.warn(`[Persistence] Failed to load cache for ${this.tableName}`, err);
                 }
             }
-            // 1. 獲取初始快照 (帶過濾)
+            // 1. 獲取初始快照 (帶過濾與 JOIN)
             try {
                 const initialSort = this._limitToLast
                     ? this.sortItems.map((item) => (Object.assign(Object.assign({}, item), { direction: item.direction === "asc" ? "desc" : "asc" })))
@@ -338,13 +336,13 @@ class Query {
                     orderBy: initialSort,
                     limit: this._limit,
                     offset: this._offset,
+                    include: this._include || undefined
                 });
                 const initialRows = this.toModels(initialData);
                 const normalizedInitial = this._limitToLast
                     ? initialRows.reverse()
                     : initialRows;
-                // 展開關聯
-                this.cache = yield this.resolveRelations(this.applyWindow(normalizedInitial));
+                this.cache = this.applyWindow(normalizedInitial);
                 callback({
                     timestamp: new Date().toISOString(),
                     txid: 0,
@@ -366,13 +364,15 @@ class Query {
                     return;
                 if (event.txid && !isOptimistic)
                     this.lastTxid = event.txid;
-                const record = this.toModel(event.record);
+                let record = this.toModel(event.record);
                 const oldRecord = event.old_record;
                 // 判斷該變更是否影響目前查詢的結果集
                 const isMatch = this.matchesFilters(record);
                 const wasMatch = this.matchesFilters(oldRecord);
                 let changed = false;
                 if (event.action === "insert" && isMatch) {
+                    if (this._include && !isOptimistic)
+                        record = yield this.patchRelations(record);
                     this.cache = [...this.cache, record];
                     changed = true;
                 }
@@ -381,11 +381,15 @@ class Query {
                     const exists = this.cache.some((item) => item.id === id);
                     if (isMatch && !exists) {
                         // 原本不符合但現在符合了
+                        if (this._include && !isOptimistic)
+                            record = yield this.patchRelations(record);
                         this.cache = [...this.cache, record];
                         changed = true;
                     }
                     else if (isMatch && exists) {
                         // 依然符合，更新內容
+                        if (this._include && !isOptimistic)
+                            record = yield this.patchRelations(record);
                         this.cache = this.cache.map((item) => item.id === id ? record : item);
                         changed = true;
                     }
@@ -403,8 +407,6 @@ class Query {
                 // 如果快取發生變動，執行回呼
                 if (changed) {
                     this.cache = this.applyWindow(this.cache);
-                    // 重新解析關聯
-                    this.cache = yield this.resolveRelations(this.cache);
                     // 更新本地持久化快取 (非樂觀更新時)
                     if (!isOptimistic && this.sdk.persistence) {
                         this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => { });
@@ -450,6 +452,7 @@ class Query {
                 orderBy: initialSort,
                 limit: this._limit,
                 offset: this._offset,
+                include: this._include || undefined
             });
             const rowModels = this.toModels(rows);
             const normalizedRows = this._limitToLast ? rowModels.reverse() : rowModels;
@@ -505,6 +508,17 @@ exports.minimum = minimum;
 const maximum = (field) => ({ type: "max", field });
 exports.maximum = maximum;
 /**
+ * 內部輔助：產生隨機 ID (模擬 Firestore 20 字元字串)
+ */
+function autoId() {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let id = "";
+    for (let i = 0; i < 20; i++) {
+        id += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return id;
+}
+/**
  * Collection 繼承自 Query
  */
 class Collection extends Query {
@@ -515,6 +529,15 @@ class Collection extends Query {
     withConverter(converter) {
         return new Collection(this.tableName, this.sdk, this.schemaName, converter);
     }
+    get id() {
+        return this.tableName;
+    }
+    get path() {
+        return `${this.schemaName}/${this.tableName}`;
+    }
+    /**
+     * add - 新增資料並回傳 Document 參考
+     */
     add(record) {
         return __awaiter(this, void 0, void 0, function* () {
             const wireData = this.toWire(record);
@@ -529,22 +552,28 @@ class Collection extends Query {
                 old_record: null,
                 metadata: { fromCache: false, hasPendingWrites: true },
             });
-            return this.sdk.client.data.add.mutate({
+            const result = yield this.sdk.client.data.add.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
                 record: wireData,
             });
+            // 回傳文件參考 (假設主鍵欄位名稱一致，預設為 id)
+            return this.doc(result.id || result.id);
         });
     }
+    /**
+     * doc - 獲取文件參考 (若未提供 ID 則自動生成)
+     */
     doc(id, idField = "id") {
-        return new Document(this.tableName, id, this.sdk, idField, this.schemaName, this.converter);
+        const finalId = id !== null && id !== void 0 ? id : autoId();
+        return new Document(this.tableName, finalId, this.sdk, idField, this.schemaName, this.converter);
     }
 }
 exports.Collection = Collection;
 class Document {
-    constructor(tableName, id, sdk, idField = "id", schemaName = "public", converter = null) {
+    constructor(tableName, _id, sdk, idField = "id", schemaName = "public", converter = null) {
         this.tableName = tableName;
-        this.id = id;
+        this._id = _id;
         this.sdk = sdk;
         this.idField = idField;
         this.schemaName = schemaName;
@@ -553,16 +582,38 @@ class Document {
         this.lastTxid = null;
         this._include = null;
     }
-    include(name, config) {
-        if (!this._include)
-            this._include = {};
-        this._include[name] = config;
+    /**
+     * collection - 模擬子集合語法
+     * 自動以目前文件的 ID 作為外鍵過濾條件
+     */
+    collection(name, foreignKey = `${this.tableName.slice(0, -1)}_id`) {
+        return this.sdk.collection(name, this.schemaName)
+            .where(foreignKey, "==", this._id);
+    }
+    include(nameOrSpec, config) {
+        if (typeof nameOrSpec === "string") {
+            if (!this._include)
+                this._include = {};
+            this._include[nameOrSpec] = config;
+        }
+        else {
+            this._include = Object.assign(Object.assign({}, (this._include || {})), nameOrSpec);
+        }
         return this;
     }
     withConverter(converter) {
-        const next = new Document(this.tableName, this.id, this.sdk, this.idField, this.schemaName, converter);
+        const next = new Document(this.tableName, this._id, this.sdk, this.idField, this.schemaName, converter);
         next._include = this._include ? Object.assign({}, this._include) : null;
         return next;
+    }
+    get id() {
+        return this._id;
+    }
+    get path() {
+        return `${this.schemaName}/${this.tableName}/${this._id}`;
+    }
+    get parent() {
+        return new Collection(this.tableName, this.sdk, this.schemaName, this.converter);
     }
     toModel(data) {
         if (!this.converter)
@@ -575,16 +626,16 @@ class Document {
         return this.converter.toFirestore(model);
     }
     getStorageKey() {
-        return `doc:${this.schemaName}.${this.tableName}:${this.id}`;
+        return `doc:${this.schemaName}.${this.tableName}:${this._id}:${JSON.stringify(this._include)}`;
     }
     get() {
         return __awaiter(this, void 0, void 0, function* () {
             const row = yield this.sdk.client.data.get.query({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
-                id: this.id,
+                id: this._id,
                 idField: this.idField,
-                include: this._include,
+                include: this._include || undefined
             });
             return row ? this.toModel(row) : null;
         });
@@ -594,7 +645,7 @@ class Document {
             const row = yield this.sdk.client.data.get.query({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
-                id: this.id,
+                id: this._id,
                 idField: this.idField,
             });
             return row !== null;
@@ -643,20 +694,29 @@ class Document {
                 });
             }
             catch (err) {
-                console.error(`Failed to fetch initial document for ${this.schemaName}.${this.tableName}/${this.id}:`, err);
+                console.error(`Failed to fetch initial document for ${this.schemaName}.${this.tableName}/${this._id}:`, err);
             }
-            const handleEvent = (event, isOptimistic = false) => {
+            const handleEvent = (event_1, ...args_1) => __awaiter(this, [event_1, ...args_1], void 0, function* (event, isOptimistic = false) {
                 if (event.table !== this.tableName ||
                     (event.schema && event.schema !== this.schemaName))
                     return;
                 if (event.txid && !isOptimistic)
                     this.lastTxid = event.txid;
-                const currentRecord = this.toModel(event.record);
+                let currentRecord = this.toModel(event.record);
                 const oldRecord = event.old_record;
-                const matchesId = (currentRecord && currentRecord[this.idField] == this.id) ||
-                    (oldRecord && oldRecord[this.idField] == this.id);
+                const matchesId = (currentRecord && currentRecord[this.idField] == this._id) ||
+                    (oldRecord && oldRecord[this.idField] == this._id);
                 if (matchesId) {
-                    this.cache = event.action === "delete" ? null : currentRecord;
+                    if (event.action === "delete") {
+                        this.cache = null;
+                    }
+                    else {
+                        // 若有 include，則重新抓取關聯視圖
+                        if (this._include && !isOptimistic) {
+                            currentRecord = yield this.get();
+                        }
+                        this.cache = currentRecord;
+                    }
                     // 更新持久化快取 (非樂觀更新時)
                     if (!isOptimistic && this.sdk.persistence) {
                         if (event.action === "delete") {
@@ -668,11 +728,11 @@ class Document {
                     }
                     callback(Object.assign(Object.assign({}, event), { record: this.cache, metadata: { fromCache: false, hasPendingWrites: isOptimistic } }));
                 }
-            };
+            });
             const serverSub = this.sdk.client.onDbEvent.subscribe({ lastTxid: this.lastTxid }, {
                 onData: (event) => handleEvent(event, false),
                 onError: (err) => {
-                    console.error(`Subscription error for document ${this.tableName}/${this.id}:`, err);
+                    console.error(`Subscription error for document ${this.tableName}/${this._id}:`, err);
                 },
             });
             const localSub = this.sdk.localEvents.subscribe((event) => handleEvent(event, true));
@@ -711,7 +771,7 @@ class Document {
             const updated = yield this.sdk.client.data.update.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
-                id: this.id,
+                id: this._id,
                 idField: this.idField,
                 record: wireData,
             });
@@ -734,7 +794,7 @@ class Document {
             const deleted = yield this.sdk.client.data.delete.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
-                id: this.id,
+                id: this._id,
                 idField: this.idField,
             });
             return deleted ? this.toModel(deleted) : null;
@@ -758,7 +818,7 @@ class Document {
             const setRow = yield this.sdk.client.data.set.mutate({
                 tableName: this.tableName,
                 schemaName: this.schemaName,
-                id: this.id,
+                id: this._id,
                 idField: this.idField,
                 record: wireData,
                 merge: (_a = options.merge) !== null && _a !== void 0 ? _a : false,
@@ -990,6 +1050,9 @@ class VanillaFirestore {
     }
     collection(name, schema = "public") {
         return new Collection(name, this, schema);
+    }
+    collectionGroup(name, schema = "public") {
+        return this.collection(name, schema);
     }
     doc(name, id, idField = "id", schema = "public") {
         return new Document(name, id, this, idField, schema);

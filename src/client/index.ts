@@ -152,16 +152,13 @@ export class Query<T = any> {
    * @param name 欄位別名
    * @param config { targetTable, localField, targetField, type: '1:1'|'1:N', schemaName, select }
    */
-  include(name: string, config: {
-    targetTable: string;
-    localField: string;
-    targetField?: string;
-    type?: "1:1" | "1:N";
-    schemaName?: string;
-    select?: string[];
-  }): Query<T> {
-    if (!this._include) this._include = {};
-    this._include[name] = config;
+  include(nameOrSpec: string | Record<string, any>, config?: any): Query<T> {
+    if (typeof nameOrSpec === "string") {
+      if (!this._include) this._include = {};
+      this._include[nameOrSpec] = config;
+    } else {
+      this._include = { ...(this._include || {}), ...nameOrSpec };
+    }
     return this;
   }
 
@@ -626,6 +623,18 @@ export const minimum = (field: string) => ({ type: "min", field });
 export const maximum = (field: string) => ({ type: "max", field });
 
 /**
+ * 內部輔助：產生隨機 ID (模擬 Firestore 20 字元字串)
+ */
+function autoId(): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let id = "";
+  for (let i = 0; i < 20; i++) {
+    id += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return id;
+}
+
+/**
  * Collection 繼承自 Query
  */
 export class Collection<T = any> extends Query<T> {
@@ -648,7 +657,18 @@ export class Collection<T = any> extends Query<T> {
     );
   }
 
-  async add(record: Partial<T>): Promise<T> {
+  get id(): string {
+    return this.tableName;
+  }
+
+  get path(): string {
+    return `${this.schemaName}/${this.tableName}`;
+  }
+
+  /**
+   * add - 新增資料並回傳 Document 參考
+   */
+  async add(record: Partial<T>): Promise<Document<T>> {
     const wireData = this.toWire(record);
 
     // 樂觀更新：發布本地 insert 事件
@@ -663,17 +683,24 @@ export class Collection<T = any> extends Query<T> {
       metadata: { fromCache: false, hasPendingWrites: true },
     });
 
-    return this.sdk.client.data.add.mutate({
+    const result = await this.sdk.client.data.add.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
       record: wireData,
     });
+
+    // 回傳文件參考 (假設主鍵欄位名稱一致，預設為 id)
+    return this.doc(result.id || (result as any).id);
   }
 
-  doc(id: string | number, idField: string = "id"): Document<T> {
+  /**
+   * doc - 獲取文件參考 (若未提供 ID 則自動生成)
+   */
+  doc(id?: string | number, idField: string = "id"): Document<T> {
+    const finalId = id ?? autoId();
     return new Document<T>(
       this.tableName,
-      id,
+      finalId,
       this.sdk,
       idField,
       this.schemaName,
@@ -689,7 +716,7 @@ export class Document<T = any> {
 
   constructor(
     private tableName: string,
-    private id: string | number,
+    private _id: string | number,
     private sdk: VanillaFirestore,
     private idField: string = "id",
     private schemaName: string = "public",
@@ -700,28 +727,25 @@ export class Document<T = any> {
    * collection - 模擬子集合語法
    * 自動以目前文件的 ID 作為外鍵過濾條件
    */
-  collection<U = any>(name: string, foreignKey: string = `${this.tableName.slice(0, -1)}_id`): Collection<U> {
+  collection<U = any>(name: string, foreignKey: string = `${this.tableName.slice(0, -1)}_id`): Query<U> {
     return this.sdk.collection<U>(name, this.schemaName)
-      .where(foreignKey, "==", this.id);
+      .where(foreignKey, "==", this._id);
   }
 
-  include(name: string, config: {
-    targetTable: string;
-    localField: string;
-    targetField?: string;
-    type?: "1:1" | "1:N";
-    schemaName?: string;
-    select?: string[];
-  }): Document<T> {
-    if (!this._include) this._include = {};
-    this._include[name] = config;
+  include(nameOrSpec: string | Record<string, any>, config?: any): Document<T> {
+    if (typeof nameOrSpec === "string") {
+      if (!this._include) this._include = {};
+      this._include[nameOrSpec] = config;
+    } else {
+      this._include = { ...(this._include || {}), ...nameOrSpec };
+    }
     return this;
   }
 
   withConverter<U = any>(converter: FirestoreDataConverter<U>): Document<U> {
     const next = new Document<U>(
       this.tableName,
-      this.id,
+      this._id,
       this.sdk,
       this.idField,
       this.schemaName,
@@ -729,6 +753,18 @@ export class Document<T = any> {
     );
     (next as any)._include = this._include ? { ...this._include } : null;
     return next;
+  }
+
+  get id(): string | number {
+    return this._id;
+  }
+
+  get path(): string {
+    return `${this.schemaName}/${this.tableName}/${this._id}`;
+  }
+
+  get parent(): Collection<T> {
+    return new Collection<T>(this.tableName, this.sdk, this.schemaName, this.converter);
   }
 
   private toModel(data: any): T {
@@ -742,14 +778,14 @@ export class Document<T = any> {
   }
 
   protected getStorageKey(): string {
-    return `doc:${this.schemaName}.${this.tableName}:${this.id}:${JSON.stringify(this._include)}`;
+    return `doc:${this.schemaName}.${this.tableName}:${this._id}:${JSON.stringify(this._include)}`;
   }
 
   async get(): Promise<T | null> {
     const row = await this.sdk.client.data.get.query({
       tableName: this.tableName,
       schemaName: this.schemaName,
-      id: this.id,
+      id: this._id,
       idField: this.idField,
       include: this._include || undefined
     });
@@ -760,7 +796,7 @@ export class Document<T = any> {
     const row = await this.sdk.client.data.get.query({
       tableName: this.tableName,
       schemaName: this.schemaName,
-      id: this.id,
+      id: this._id,
       idField: this.idField,
     });
     return row !== null;
@@ -810,7 +846,7 @@ export class Document<T = any> {
       });
     } catch (err) {
       console.error(
-        `Failed to fetch initial document for ${this.schemaName}.${this.tableName}/${this.id}:`,
+        `Failed to fetch initial document for ${this.schemaName}.${this.tableName}/${this._id}:`,
         err,
       );
     }
@@ -828,8 +864,8 @@ export class Document<T = any> {
       const oldRecord = event.old_record as any;
 
       const matchesId =
-        (currentRecord && currentRecord[this.idField] == this.id) ||
-        (oldRecord && oldRecord[this.idField] == this.id);
+        (currentRecord && currentRecord[this.idField] == this._id) ||
+        (oldRecord && oldRecord[this.idField] == this._id);
 
       if (matchesId) {
         if (event.action === "delete") {
@@ -865,7 +901,7 @@ export class Document<T = any> {
         onData: (event: any) => handleEvent(event, false),
         onError: (err: any) => {
           console.error(
-            `Subscription error for document ${this.tableName}/${this.id}:`,
+            `Subscription error for document ${this.tableName}/${this._id}:`,
             err,
           );
         },
@@ -910,7 +946,7 @@ export class Document<T = any> {
     const updated = await this.sdk.client.data.update.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
-      id: this.id,
+      id: this._id,
       idField: this.idField,
       record: wireData,
     });
@@ -933,7 +969,7 @@ export class Document<T = any> {
     const deleted = await this.sdk.client.data.delete.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
-      id: this.id,
+      id: this._id,
       idField: this.idField,
     });
     return deleted ? this.toModel(deleted) : null;
@@ -957,7 +993,7 @@ export class Document<T = any> {
     const setRow = await this.sdk.client.data.set.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
-      id: this.id,
+      id: this._id,
       idField: this.idField,
       record: wireData,
       merge: options.merge ?? false,
