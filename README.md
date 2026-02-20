@@ -321,6 +321,16 @@ const posts = await userPosts.get();
 const allImportant = sdk.collectionGroup('posts').where('tag', '==', 'important');
 ```
 
+### 水平擴展 (Horizontal Scaling)
+
+本系統支援透過 Redis 實現水平擴展。當您部署多個後端節點時，只需在環境變數中設定 `REDIS_URL`，系統會自動切換為分佈式事件總線模式。
+
+```env
+REDIS_URL=redis://localhost:6379
+```
+
+在此模式下，任何節點接收到的 PostgreSQL 異動都會透過 Redis Pub/Sub 同步給所有節點，確保全站客戶端都能即時收到更新。
+
 ### 可靠性與追補機制
 
 SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid) 與後端的 `audit_log` 機制，當您的應用程式重新連線時，SDK 會自動請求補發所有遺漏的異動事件。
