@@ -4,6 +4,11 @@
     --primary-color: #007bff;
     --nav-bg: #f8f9fa;
     --border-color: #eee;
+    --spacing-unit: 1rem;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
 }
 
 body {
@@ -11,13 +16,18 @@ body {
     line-height: 1.6;
     margin: 0;
     color: var(--text-color);
+    background-color: var(--bg-color);
+    /* 使用 clamp 實現流體字體 */
+    font-size: clamp(16px, 1.8vw, 18px);
 }
 
 .app-container {
     display: flex;
     min-height: 100vh;
+    flex-direction: row;
 }
 
+/* 側邊欄響應式優化 */
 .sidebar {
     width: 280px;
     background: var(--nav-bg);
@@ -26,33 +36,137 @@ body {
     position: sticky;
     top: 0;
     height: 100vh;
-    box-sizing: border-box;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.sidebar h2 {
+    font-size: 1.4rem;
+    margin-top: 0;
+    margin-bottom: 2rem;
+    color: var(--primary-color);
 }
 
 .main-content {
     flex: 1;
     padding: 3rem;
-    max-width: 800px;
+    max-width: 900px;
+    min-width: 0; /* 關鍵：防止 flex 項目溢出 */
 }
 
 .nav-link {
     display: block;
-    padding: 0.5rem 0;
+    padding: 0.8rem 1rem;
     color: var(--text-color);
     text-decoration: none;
     cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.2s;
+    margin-bottom: 0.2rem;
 }
 
-.nav-link:hover, .nav-link.active {
+.nav-link:hover {
+    background-color: rgba(0, 123, 255, 0.05);
     color: var(--primary-color);
+}
+
+.nav-link.active {
+    background-color: var(--primary-color);
+    color: white;
     font-weight: bold;
 }
 
-h1, h2, h3 { color: #000; }
+/* 內容樣式優化 */
+h1, h2, h3 { 
+    color: #000; 
+    margin-top: 2rem;
+}
+
+h1:first-child { margin-top: 0; }
+
 pre {
     background: #f4f4f4;
-    padding: 1rem;
+    padding: 1.2rem;
     border-radius: 8px;
     overflow-x: auto;
+    font-size: 0.9rem;
+    border: 1px solid #ddd;
 }
-code { font-family: monospace; }
+
+code { 
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    background: rgba(0,0,0,0.05);
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+}
+
+pre code {
+    background: none;
+    padding: 0;
+}
+
+img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+}
+
+/* 🏆 行動裝置響應式斷點 (768px) */
+@media (max-width: 768px) {
+    .app-container {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        padding: 1rem;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .sidebar h2 {
+        margin-bottom: 1rem;
+        font-size: 1.2rem;
+    }
+
+    .sidebar nav {
+        display: flex;
+        overflow-x: auto;
+        gap: 0.5rem;
+        padding-bottom: 0.5rem;
+        /* 隱藏捲軸但保持滾動功能 (現代瀏覽器) */
+        scrollbar-width: none;
+    }
+    
+    .sidebar nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .nav-link {
+        white-space: nowrap;
+        padding: 0.5rem 1rem;
+        font-size: 0.9rem;
+        background: #eee;
+    }
+
+    .main-content {
+        padding: 1.5rem;
+    }
+
+    pre {
+        padding: 1rem;
+        font-size: 0.85rem;
+    }
+}
+
+/* 針對極小螢幕優化 */
+@media (max-width: 480px) {
+    .main-content {
+        padding: 1rem;
+    }
+    
+    h1 { font-size: 1.6rem; }
+    h2 { font-size: 1.4rem; }
+}
