@@ -244,7 +244,18 @@ const focusProjects = sdk
 focusProjects.onSnapshot(({ record: projects }) => {
   console.log("命中任一重點標籤的專案:", projects);
 });
+
+// Firestore 風格 limitToLast：需搭配 orderBy
+const latestImportant = sdk
+  .collection("events")
+  .orderBy("created_at", "asc")
+  .limitToLast(5);
+
+latestImportant.onSnapshot(({ record: rows }) => {
+  console.log("最後 5 筆事件:", rows);
+});
 ```
 
 - **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `in`, `not-in`, `array-contains`, `array-contains-any`。
+- **分頁語法**：`limit(n)`、`offset(n)`、`limitToLast(n)`（需搭配 `orderBy`）。
 - **即時過濾**：當資料庫發生異動時，SDK 會在客戶端自動判斷該變更是否符合您的查詢條件，並動態更新結果集。

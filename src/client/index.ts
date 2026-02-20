@@ -97,6 +97,7 @@ export class Query<T = any> {
   protected sortItems: SortItem[] = [];
   protected _limit: number = 100;
   protected _offset: number = 0;
+  protected _limitToLast: boolean = false;
   protected lastTxid: string | number | null = null;
   protected cache: T[] = [];
 
@@ -118,6 +119,13 @@ export class Query<T = any> {
 
   limit(n: number): Query<T> {
     this._limit = n;
+    this._limitToLast = false;
+    return this;
+  }
+
+  limitToLast(n: number): Query<T> {
+    this._limit = n;
+    this._limitToLast = true;
     return this;
   }
 
@@ -169,18 +177,78 @@ export class Query<T = any> {
     });
   }
 
+  private ensureLimitToLastReady() {
+    if (this._limitToLast && this.sortItems.length === 0) {
+      throw new Error(
+        "limitToLast() 需要至少一個 orderBy()，以確保結果排序穩定。",
+      );
+    }
+  }
+
+  private compareValues(a: any, b: any): number {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    if (a === b) return 0;
+    return a > b ? 1 : -1;
+  }
+
+  private applySort(records: T[]): T[] {
+    if (this.sortItems.length === 0) return [...records];
+
+    return [...records].sort((left: any, right: any) => {
+      for (const sort of this.sortItems) {
+        const diff = this.compareValues(
+          left?.[sort.field],
+          right?.[sort.field],
+        );
+        if (diff !== 0) {
+          return sort.direction === "asc" ? diff : -diff;
+        }
+      }
+      return 0;
+    });
+  }
+
+  private applyWindow(records: T[]): T[] {
+    const sorted = this.applySort(records);
+    const start = Math.max(0, this._offset);
+
+    if (this._limitToLast) {
+      const sliced = start > 0 ? sorted.slice(start) : sorted;
+      if (this._limit <= 0) return sliced;
+      const begin = Math.max(0, sliced.length - this._limit);
+      return sliced.slice(begin);
+    }
+
+    if (this._limit <= 0) return sorted.slice(start);
+    return sorted.slice(start, start + this._limit);
+  }
+
   async onSnapshot(callback: (snapshot: DbEvent<T[]>) => void) {
+    this.ensureLimitToLastReady();
+
     // 1. 獲取初始快照 (帶過濾)
     try {
+      const initialSort = this._limitToLast
+        ? this.sortItems.map((item) => ({
+            ...item,
+            direction: item.direction === "asc" ? "desc" : "asc",
+          }))
+        : this.sortItems;
+
       const initialData = await this.sdk.data.list.query({
         tableName: this.tableName,
         schemaName: this.schemaName,
         where: this.filters,
-        orderBy: this.sortItems,
+        orderBy: initialSort,
         limit: this._limit,
         offset: this._offset,
       });
-      this.cache = initialData;
+      const normalizedInitial = this._limitToLast
+        ? (initialData as T[]).reverse()
+        : initialData;
+      this.cache = this.applyWindow(normalizedInitial);
 
       callback({
         timestamp: new Date().toISOString(),
@@ -250,7 +318,7 @@ export class Query<T = any> {
 
           // 如果快取發生變動，執行回呼
           if (changed) {
-            // 這裡可以再執行一次客戶端排序以確保順序正確
+            this.cache = this.applyWindow(this.cache);
             callback({
               ...event,
               record: this.cache,
@@ -277,16 +345,27 @@ export class Query<T = any> {
   }
 
   async get(): Promise<T[]> {
+    this.ensureLimitToLastReady();
+
+    const initialSort = this._limitToLast
+      ? this.sortItems.map((item) => ({
+          ...item,
+          direction: item.direction === "asc" ? "desc" : "asc",
+        }))
+      : this.sortItems;
+
     const rows = await this.sdk.data.list.query({
       tableName: this.tableName,
       schemaName: this.schemaName,
       where: this.filters,
-      orderBy: this.sortItems,
+      orderBy: initialSort,
       limit: this._limit,
       offset: this._offset,
     });
-    this.cache = rows;
-    return rows;
+
+    const normalizedRows = this._limitToLast ? rows.reverse() : rows;
+    this.cache = this.applyWindow(normalizedRows);
+    return this.cache;
   }
 }
 

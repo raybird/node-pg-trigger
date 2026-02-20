@@ -6,7 +6,7 @@
     "start": "env-cmd nodemon ./src/server/index.ts",
     "build": "tsc",
     "build:client": "esbuild public/client.ts --bundle --outfile=public/dist/client.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test tests/*.test.js"
   },
   "keywords": [],
   "author": "a691228@gmail.com",

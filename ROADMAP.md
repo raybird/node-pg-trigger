@@ -25,6 +25,7 @@
   - [x] `doc.set(data, { merge })` upsert 與部分欄位合併。
 - [x] **進階查詢支援 (Querying)**：
   - [x] 實作 `where()`, `orderBy()`, `limit()` 鏈式語法。
+  - [x] 補齊 Firestore 風格 `limitToLast()` 查詢窗口（需搭配 `orderBy`）。
   - [x] Server 端支援動態 SQL 過濾條件生成。
   - [x] Client 端支援實時事件的條件匹配 (Event Filtering)。
   - [x] 補齊 Firestore 風格集合運算子 `in` / `not-in`。
