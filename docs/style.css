@@ -199,6 +199,7 @@ img {
         padding: 1rem;
         border-right: none;
         border-bottom: 1px solid var(--border-color);
+        transform: none !important; /* 移除隱藏機制 */
     }
 
     .sidebar h2 {
@@ -208,26 +209,33 @@ img {
 
     .sidebar nav {
         display: flex;
-        overflow-x: auto;
+        flex-wrap: wrap; /* 關鍵：自動折行 */
         gap: 0.5rem;
-        padding-bottom: 0.5rem;
-        /* 隱藏捲軸但保持滾動功能 (現代瀏覽器) */
-        scrollbar-width: none;
-    }
-    
-    .sidebar nav::-webkit-scrollbar {
-        display: none;
+        overflow: visible;
     }
 
     .nav-link {
-        white-space: nowrap;
-        padding: 0.5rem 1rem;
-        font-size: 0.9rem;
+        display: inline-block;
+        padding: 0.4rem 0.8rem;
+        font-size: 0.85rem;
         background: #eee;
+        border-radius: 999px;
+        margin-bottom: 0;
+    }
+
+    .nav-link.active {
+        background-color: var(--primary-color);
+        color: white;
     }
 
     .main-content {
         padding: 1.5rem;
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+
+    .hamburger-btn, .menu-overlay {
+        display: none !important; /* 移除漢堡模式，改用平舖 */
     }
 
     pre {

@@ -4,7 +4,6 @@ export class App extends BaseComponent {
     constructor() {
         super();
         this.state = {
-            isMenuOpen: false,
             currentDoc: 'intro',
             docs: [
                 { id: 'intro', title: '🚀 簡介與快速開始' },
@@ -21,19 +20,11 @@ export class App extends BaseComponent {
         super.connectedCallback();
     }
 
-    toggleMenu() {
-        this.setState({ isMenuOpen: !this.state.isMenuOpen });
-    }
-
-    closeMenu() {
-        this.setState({ isMenuOpen: false });
-    }
-
     async loadDoc(id) {
         try {
             const response = await fetch(`./docs/${id}.html`);
             const html = await response.ok ? await response.text() : '<h1>404</h1>文件未找到';
-            this.setState({ currentDoc: id, content: html, isMenuOpen: false });
+            this.setState({ currentDoc: id, content: html });
         } catch (err) {
             this.setState({ content: '載入錯誤' });
         }
@@ -42,14 +33,7 @@ export class App extends BaseComponent {
     template() {
         return this.html`
             <div class="app-container">
-                <button class="hamburger-btn" onclick="this.closest('x-app').toggleMenu()">
-                    ${this.state.isMenuOpen ? '✕' : '☰'}
-                </button>
-                
-                <div class="menu-overlay ${this.state.isMenuOpen ? 'open' : ''}" 
-                     onclick="this.closest('x-app').closeMenu()"></div>
-
-                <aside class="sidebar ${this.state.isMenuOpen ? 'open' : ''}">
+                <aside class="sidebar">
                     <h2>PG Trigger</h2>
                     <nav>
                         ${this.state.docs.map(doc => `
