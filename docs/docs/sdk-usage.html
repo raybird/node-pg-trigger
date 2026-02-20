@@ -142,4 +142,15 @@ sdk.collection('users').onSnapshot(({ record, metadata }) => {
 });
 </code></pre>
 
+<h2>11. 子集合與集合群組（Subcollections）</h2>
+<p>提供與 Firestore 一致的嵌套路徑語法，簡化外鍵查詢流程。</p>
+<pre><code>
+// 子集合：獲取指定文件的關聯資料
+const userPosts = sdk.doc('users', 1).collection('posts');
+const list = await userPosts.get();
+
+// 集合群組：跨文件的廣域搜尋
+const allComments = await sdk.collectionGroup('comments').get();
+</code></pre>
+
 <p>更多 API 速查請見：<code>docs/firestore-realtime-cheatsheet.md</code></p>

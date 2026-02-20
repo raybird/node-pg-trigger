@@ -301,6 +301,26 @@ query.onSnapshot(({ record: posts }) => {
 });
 ```
 
+**範例：子集合 (Subcollections)**
+
+模擬 Firestore 的嵌套路徑，自動處理外鍵連結。
+
+```typescript
+// 獲取使用者 'raybird' 的所有文章
+// 等價於 sdk.collection('posts').where('user_id', '==', 'raybird')
+const userPosts = sdk.doc('users', 'raybird').collection('posts');
+const posts = await userPosts.get();
+```
+
+**範例：集合群組 (Collection Groups)**
+
+跨過父文件層級，搜尋所有特定名稱的集合（在 PostgreSQL 中即為直接查詢資料表）。
+
+```typescript
+// 搜尋全站所有標記為 'important' 的文章
+const allImportant = sdk.collectionGroup('posts').where('tag', '==', 'important');
+```
+
 ### 可靠性與追補機制
 
 SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid) 與後端的 `audit_log` 機制，當您的應用程式重新連線時，SDK 會自動請求補發所有遺漏的異動事件。

@@ -70,6 +70,7 @@
 - [x] **關聯語意 DSL v0.2 規格化**：
   - [x] 支援 `1:1`、`1:N` 伺服器端 JOIN 與 `JSON_AGG` 展開。
   - [x] SDK 實作 `include()` 鏈式語法替代舊有的 `withRelation()`。
+  - [x] 實作 `doc().collection()` 子集合語法糖與 `collectionGroup()` 別名。
   - [x] 支援單次請求中展開多個不同關聯。
   - [x] 教學範例與文件更新完成。
 - [ ] **中介層優化**：

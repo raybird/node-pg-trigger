@@ -63,15 +63,6 @@ export interface FirestoreDataConverter<TModel = any> {
   toFirestore?(model: Partial<TModel>): any;
 }
 
-export interface RelationConfig {
-  name: string;
-  targetTable: string;
-  localField: string;
-  targetField: string;
-  schemaName?: string;
-  type: "1:1" | "1:N";
-}
-
 /**
  * FieldValue - 支援特殊伺服器端值的處理
  */
@@ -144,7 +135,6 @@ export class Query<T = any> {
   protected lastTxid: string | number | null = null;
   protected cache: T[] = [];
   protected converter: FirestoreDataConverter<T> | null = null;
-  protected relations: RelationConfig[] = [];
 
   constructor(
     protected tableName: string,
@@ -157,7 +147,19 @@ export class Query<T = any> {
     return this;
   }
 
-  include(name: string, config: any): Query<T> {
+  /**
+   * include - 展開關聯資料 (伺服器端 JOIN)
+   * @param name 欄位別名
+   * @param config { targetTable, localField, targetField, type: '1:1'|'1:N', schemaName, select }
+   */
+  include(name: string, config: {
+    targetTable: string;
+    localField: string;
+    targetField?: string;
+    type?: "1:1" | "1:N";
+    schemaName?: string;
+    select?: string[];
+  }): Query<T> {
     if (!this._include) this._include = {};
     this._include[name] = config;
     return this;
@@ -239,8 +241,8 @@ export class Query<T = any> {
   protected getStorageKey(): string {
     const filterStr = JSON.stringify(this.filters);
     const sortStr = JSON.stringify(this.sortItems);
-    const relStr = JSON.stringify(this.relations);
-    return `query:${this.schemaName}.${this.tableName}:${filterStr}:${sortStr}:${relStr}:${this._limit}:${this._offset}`;
+    const incStr = JSON.stringify(this._include);
+    return `query:${this.schemaName}.${this.tableName}:${filterStr}:${sortStr}:${incStr}:${this._limit}:${this._offset}`;
   }
 
   /**
@@ -372,31 +374,20 @@ export class Query<T = any> {
     return cursorApplied.slice(start, start + this._limit);
   }
 
-  protected async resolveRelations(records: T[]): Promise<T[]> {
-    if (this.relations.length === 0 || records.length === 0) return records;
+  /**
+   * 當接收到即時變更事件時，若該查詢有 include，則需對受影響的記錄重新抓取關聯
+   * 這是因為 trigger 只返回變動的原始行。
+   */
+  protected async patchRelations(record: any): Promise<T> {
+    if (!this._include || !record) return record;
 
-    const resolved = await Promise.all(records.map(async (record: any) => {
-      const updates: any = {};
-      for (const rel of this.relations) {
-        const val = record[rel.localField];
-        if (val === undefined || val === null) {
-          updates[rel.name] = rel.type === "1:1" ? null : [];
-          continue;
-        }
-
-        if (rel.type === "1:1") {
-          const doc = this.sdk.doc(rel.targetTable, val, rel.targetField, rel.schemaName);
-          updates[rel.name] = await doc.get();
-        } else {
-          const query = this.sdk.collection(rel.targetTable, rel.schemaName)
-            .where(rel.targetField, "==", val);
-          updates[rel.name] = await query.get();
-        }
-      }
-      return { ...record, ...updates };
-    }));
-
-    return resolved;
+    // 這裡我們直接調用一次 get() 來獲取包含關聯的完整視圖
+    // 未來可優化為僅抓取缺少的關聯項
+    const fullRecord = await this.sdk.doc(this.tableName, record.id, "id", this.schemaName)
+      .include(this._include)
+      .get();
+    
+    return fullRecord || record;
   }
 
   async onSnapshot(callback: (snapshot: DbEvent<T[]>) => void) {
@@ -424,7 +415,7 @@ export class Query<T = any> {
       }
     }
 
-    // 1. 獲取初始快照 (帶過濾)
+    // 1. 獲取初始快照 (帶過濾與 JOIN)
     try {
       const initialSort = this._limitToLast
         ? this.sortItems.map((item) => ({
@@ -440,14 +431,15 @@ export class Query<T = any> {
         orderBy: initialSort,
         limit: this._limit,
         offset: this._offset,
+        include: this._include || undefined
       });
+      
       const initialRows = this.toModels(initialData as any[]);
       const normalizedInitial = this._limitToLast
         ? initialRows.reverse()
         : initialRows;
       
-      // 展開關聯
-      this.cache = await this.resolveRelations(this.applyWindow(normalizedInitial as T[]));
+      this.cache = this.applyWindow(normalizedInitial as T[]);
 
       callback({
         timestamp: new Date().toISOString(),
@@ -476,7 +468,7 @@ export class Query<T = any> {
 
       if (event.txid && !isOptimistic) this.lastTxid = event.txid;
 
-      const record = this.toModel(event.record as any) as any;
+      let record = this.toModel(event.record as any) as any;
       const oldRecord = event.old_record as any;
 
       // 判斷該變更是否影響目前查詢的結果集
@@ -486,6 +478,7 @@ export class Query<T = any> {
       let changed = false;
 
       if (event.action === "insert" && isMatch) {
+        if (this._include && !isOptimistic) record = await this.patchRelations(record);
         this.cache = [...this.cache, record];
         changed = true;
       } else if (event.action === "update") {
@@ -494,10 +487,12 @@ export class Query<T = any> {
 
         if (isMatch && !exists) {
           // 原本不符合但現在符合了
+          if (this._include && !isOptimistic) record = await this.patchRelations(record);
           this.cache = [...this.cache, record];
           changed = true;
         } else if (isMatch && exists) {
           // 依然符合，更新內容
+          if (this._include && !isOptimistic) record = await this.patchRelations(record);
           this.cache = this.cache.map((item: any) =>
             item.id === id ? record : item,
           );
@@ -517,9 +512,6 @@ export class Query<T = any> {
       if (changed) {
         this.cache = this.applyWindow(this.cache);
         
-        // 重新解析關聯
-        this.cache = await this.resolveRelations(this.cache);
-
         // 更新本地持久化快取 (非樂觀更新時)
         if (!isOptimistic && this.sdk.persistence) {
           this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => {});
@@ -580,6 +572,7 @@ export class Query<T = any> {
       orderBy: initialSort,
       limit: this._limit,
       offset: this._offset,
+      include: this._include || undefined
     });
 
     const rowModels = this.toModels(rows as any[]);
@@ -703,7 +696,23 @@ export class Document<T = any> {
     private converter: FirestoreDataConverter<T> | null = null,
   ) {}
 
-  include(name: string, config: any): Document<T> {
+  /**
+   * collection - 模擬子集合語法
+   * 自動以目前文件的 ID 作為外鍵過濾條件
+   */
+  collection<U = any>(name: string, foreignKey: string = `${this.tableName.slice(0, -1)}_id`): Collection<U> {
+    return this.sdk.collection<U>(name, this.schemaName)
+      .where(foreignKey, "==", this.id);
+  }
+
+  include(name: string, config: {
+    targetTable: string;
+    localField: string;
+    targetField?: string;
+    type?: "1:1" | "1:N";
+    schemaName?: string;
+    select?: string[];
+  }): Document<T> {
     if (!this._include) this._include = {};
     this._include[name] = config;
     return this;
@@ -733,7 +742,7 @@ export class Document<T = any> {
   }
 
   protected getStorageKey(): string {
-    return `doc:${this.schemaName}.${this.tableName}:${this.id}`;
+    return `doc:${this.schemaName}.${this.tableName}:${this.id}:${JSON.stringify(this._include)}`;
   }
 
   async get(): Promise<T | null> {
@@ -742,7 +751,7 @@ export class Document<T = any> {
       schemaName: this.schemaName,
       id: this.id,
       idField: this.idField,
-      include: this._include,
+      include: this._include || undefined
     });
     return row ? this.toModel(row) : null;
   }
@@ -806,7 +815,7 @@ export class Document<T = any> {
       );
     }
 
-    const handleEvent = (event: any, isOptimistic: boolean = false) => {
+    const handleEvent = async (event: any, isOptimistic: boolean = false) => {
       if (
         event.table !== this.tableName ||
         (event.schema && event.schema !== this.schemaName)
@@ -815,7 +824,7 @@ export class Document<T = any> {
 
       if (event.txid && !isOptimistic) this.lastTxid = event.txid;
 
-      const currentRecord = this.toModel(event.record as any) as any;
+      let currentRecord = this.toModel(event.record as any) as any;
       const oldRecord = event.old_record as any;
 
       const matchesId =
@@ -823,7 +832,15 @@ export class Document<T = any> {
         (oldRecord && oldRecord[this.idField] == this.id);
 
       if (matchesId) {
-        this.cache = event.action === "delete" ? null : currentRecord;
+        if (event.action === "delete") {
+          this.cache = null;
+        } else {
+          // 若有 include，則重新抓取關聯視圖
+          if (this._include && !isOptimistic) {
+            currentRecord = await this.get();
+          }
+          this.cache = currentRecord;
+        }
 
         // 更新持久化快取 (非樂觀更新時)
         if (!isOptimistic && this.sdk.persistence) {
@@ -1197,6 +1214,10 @@ export class VanillaFirestore {
 
   collection<T = any>(name: string, schema: string = "public") {
     return new Collection<T>(name, this, schema);
+  }
+
+  collectionGroup<T = any>(name: string, schema: string = "public") {
+    return this.collection<T>(name, schema);
   }
 
   doc<T = any>(
