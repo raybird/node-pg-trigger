@@ -6,6 +6,18 @@ import {
 } from "@trpc/client";
 import { createWSClient } from "@trpc/client";
 import type { AppRouter } from "../server/router";
+import { PersistenceProvider, IndexedDBPersistence } from "./persistence";
+
+export interface SnapshotMetadata {
+  /**
+   * 資料是否來自本地快取 (尚未與伺服器同步)
+   */
+  fromCache: boolean;
+  /**
+   * 是否有尚未確認的本地寫入
+   */
+  hasPendingWrites: boolean;
+}
 
 export type DbEvent<T = any> = {
   timestamp: string;
@@ -15,6 +27,7 @@ export type DbEvent<T = any> = {
   table: string;
   record: T | T[];
   old_record: T | null;
+  metadata: SnapshotMetadata;
 };
 
 export type FilterOperator =
@@ -94,6 +107,19 @@ export class FieldValue {
   }
 }
 
+class LocalEventBus {
+  private listeners = new Set<(event: DbEvent) => void>();
+
+  publish(event: DbEvent) {
+    this.listeners.forEach((l) => l(event));
+  }
+
+  subscribe(callback: (event: DbEvent) => void) {
+    this.listeners.add(callback);
+    return () => this.listeners.delete(callback);
+  }
+}
+
 /**
  * Query 類別 - 支援過濾、排序與分頁
  */
@@ -111,7 +137,7 @@ export class Query<T = any> {
 
   constructor(
     protected tableName: string,
-    protected sdk: any,
+    protected sdk: VanillaFirestore,
     protected schemaName: string = "public",
   ) {}
 
@@ -190,6 +216,12 @@ export class Query<T = any> {
   protected toWire(model: any): any {
     if (!this.converter || !this.converter.toFirestore) return model;
     return this.converter.toFirestore(model);
+  }
+
+  protected getStorageKey(): string {
+    const filterStr = JSON.stringify(this.filters);
+    const sortStr = JSON.stringify(this.sortItems);
+    return `query:${this.schemaName}.${this.tableName}:${filterStr}:${sortStr}:${this._limit}:${this._offset}`;
   }
 
   /**
@@ -324,6 +356,28 @@ export class Query<T = any> {
   async onSnapshot(callback: (snapshot: DbEvent<T[]>) => void) {
     this.ensureQueryReady();
 
+    // 0. 嘗試從本地快取載入
+    if (this.sdk.persistence) {
+      try {
+        const cached = await this.sdk.persistence.get(this.getStorageKey());
+        if (cached && Array.isArray(cached)) {
+          this.cache = cached;
+          callback({
+            timestamp: new Date().toISOString(),
+            txid: 0,
+            action: "initial",
+            schema: this.schemaName,
+            table: this.tableName,
+            record: this.cache,
+            old_record: null,
+            metadata: { fromCache: true, hasPendingWrites: false },
+          });
+        }
+      } catch (err) {
+        console.warn(`[Persistence] Failed to load cache for ${this.tableName}`, err);
+      }
+    }
+
     // 1. 獲取初始快照 (帶過濾)
     try {
       const initialSort = this._limitToLast
@@ -333,7 +387,7 @@ export class Query<T = any> {
           }))
         : this.sortItems;
 
-      const initialData = await this.sdk.data.list.query({
+      const initialData = await this.sdk.client.data.list.query({
         tableName: this.tableName,
         schemaName: this.schemaName,
         where: this.filters,
@@ -355,6 +409,7 @@ export class Query<T = any> {
         table: this.tableName,
         record: this.cache,
         old_record: null,
+        metadata: { fromCache: false, hasPendingWrites: false },
       });
     } catch (err) {
       console.error(
@@ -364,71 +419,87 @@ export class Query<T = any> {
     }
 
     // 2. 訂閱變更並自動維護快取 (含過濾邏輯)
-    const subscription = this.sdk.onDbEvent.subscribe(
+    const handleEvent = (event: any, isOptimistic: boolean = false) => {
+      if (
+        event.table !== this.tableName ||
+        (event.schema && event.schema !== this.schemaName)
+      )
+        return;
+
+      if (event.txid && !isOptimistic) this.lastTxid = event.txid;
+
+      const record = this.toModel(event.record as any) as any;
+      const oldRecord = event.old_record as any;
+
+      // 判斷該變更是否影響目前查詢的結果集
+      const isMatch = this.matchesFilters(record);
+      const wasMatch = this.matchesFilters(oldRecord);
+
+      let changed = false;
+
+      if (event.action === "insert" && isMatch) {
+        this.cache = [...this.cache, record];
+        changed = true;
+      } else if (event.action === "update") {
+        const id = record.id;
+        const exists = this.cache.some((item: any) => item.id === id);
+
+        if (isMatch && !exists) {
+          // 原本不符合但現在符合了
+          this.cache = [...this.cache, record];
+          changed = true;
+        } else if (isMatch && exists) {
+          // 依然符合，更新內容
+          this.cache = this.cache.map((item: any) =>
+            item.id === id ? record : item,
+          );
+          changed = true;
+        } else if (!isMatch && exists) {
+          // 原本符合但現在不符合了，移除
+          this.cache = this.cache.filter((item: any) => item.id !== id);
+          changed = true;
+        }
+      } else if (event.action === "delete" && wasMatch) {
+        const id = oldRecord.id;
+        this.cache = this.cache.filter((item: any) => item.id !== id);
+        changed = true;
+      }
+
+      // 如果快取發生變動，執行回呼
+      if (changed) {
+        this.cache = this.applyWindow(this.cache);
+        
+        // 更新本地持久化快取 (非樂觀更新時)
+        if (!isOptimistic && this.sdk.persistence) {
+          this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => {});
+        }
+
+        callback({
+          ...event,
+          record: this.cache,
+          metadata: { fromCache: false, hasPendingWrites: isOptimistic },
+        } as DbEvent<T[]>);
+      }
+    };
+
+    const serverSub = this.sdk.client.onDbEvent.subscribe(
       { lastTxid: this.lastTxid },
       {
-        onData: (event: DbEvent<T>) => {
-          if (
-            event.table !== this.tableName ||
-            (event.schema && event.schema !== this.schemaName)
-          )
-            return;
-
-          if (event.txid) this.lastTxid = event.txid;
-
-          const record = this.toModel(event.record as any) as any;
-          const oldRecord = event.old_record as any;
-
-          // 判斷該變更是否影響目前查詢的結果集
-          const isMatch = this.matchesFilters(record);
-          const wasMatch = this.matchesFilters(oldRecord);
-
-          let changed = false;
-
-          if (event.action === "insert" && isMatch) {
-            this.cache = [...this.cache, record];
-            changed = true;
-          } else if (event.action === "update") {
-            const id = record.id;
-            const exists = this.cache.some((item: any) => item.id === id);
-
-            if (isMatch && !exists) {
-              // 原本不符合但現在符合了
-              this.cache = [...this.cache, record];
-              changed = true;
-            } else if (isMatch && exists) {
-              // 依然符合，更新內容
-              this.cache = this.cache.map((item: any) =>
-                item.id === id ? record : item,
-              );
-              changed = true;
-            } else if (!isMatch && exists) {
-              // 原本符合但現在不符合了，移除
-              this.cache = this.cache.filter((item: any) => item.id !== id);
-              changed = true;
-            }
-          } else if (event.action === "delete" && wasMatch) {
-            const id = oldRecord.id;
-            this.cache = this.cache.filter((item: any) => item.id !== id);
-            changed = true;
-          }
-
-          // 如果快取發生變動，執行回呼
-          if (changed) {
-            this.cache = this.applyWindow(this.cache);
-            callback({
-              ...event,
-              record: this.cache,
-            } as DbEvent<T[]>);
-          }
-        },
+        onData: (event: any) => handleEvent(event, false),
         onError: (err: any) => {
           console.error(`Subscription error for query ${this.tableName}:`, err);
         },
       },
     );
 
-    return () => subscription.unsubscribe();
+    const localSub = this.sdk.localEvents.subscribe((event) =>
+      handleEvent(event, true),
+    );
+
+    return () => {
+      serverSub.unsubscribe();
+      localSub();
+    };
   }
 
   async valueChanges(callback: (records: T[]) => void) {
@@ -451,7 +522,7 @@ export class Query<T = any> {
         }))
       : this.sortItems;
 
-    const rows = await this.sdk.data.list.query({
+    const rows = await this.sdk.client.data.list.query({
       tableName: this.tableName,
       schemaName: this.schemaName,
       where: this.filters,
@@ -467,7 +538,7 @@ export class Query<T = any> {
   }
 
   async count(): Promise<number> {
-    const result = await this.sdk.data.aggregate.query({
+    const result = await this.sdk.client.data.aggregate.query({
       tableName: this.tableName,
       schemaName: this.schemaName,
       where: this.filters,
@@ -485,7 +556,7 @@ export class Query<T = any> {
       alias,
     }));
 
-    const result = await this.sdk.data.aggregate.query({
+    const result = await this.sdk.client.data.aggregate.query({
       tableName: this.tableName,
       schemaName: this.schemaName,
       where: this.filters,
@@ -514,31 +585,44 @@ export const maximum = (field: string) => ({ type: "max", field });
  * Collection 繼承自 Query
  */
 export class Collection<T = any> extends Query<T> {
-  constructor(tableName: string, sdk: any, schemaName: string = "public") {
+  constructor(
+    tableName: string,
+    sdk: VanillaFirestore,
+    schemaName: string = "public",
+    converter: FirestoreDataConverter<T> | null = null,
+  ) {
     super(tableName, sdk, schemaName);
+    this.converter = converter;
   }
 
   withConverter<U = any>(converter: FirestoreDataConverter<U>): Collection<U> {
-    const next = new Collection<U>(this.tableName, this.sdk, this.schemaName);
-    (next as any).filters = [...this.filters];
-    (next as any).sortItems = [...this.sortItems];
-    (next as any)._limit = this._limit;
-    (next as any)._offset = this._offset;
-    (next as any)._limitToLast = this._limitToLast;
-    (next as any)._startCursor = this._startCursor
-      ? { ...this._startCursor }
-      : null;
-    (next as any)._endCursor = this._endCursor ? { ...this._endCursor } : null;
-    (next as any).lastTxid = this.lastTxid;
-    (next as any).converter = converter;
-    return next;
+    return new Collection<U>(
+      this.tableName,
+      this.sdk,
+      this.schemaName,
+      converter,
+    );
   }
 
   async add(record: Partial<T>): Promise<T> {
-    return this.sdk.data.add.mutate({
+    const wireData = this.toWire(record);
+
+    // 樂觀更新：發布本地 insert 事件
+    this.sdk.localEvents.publish({
+      timestamp: new Date().toISOString(),
+      txid: 0,
+      action: "insert",
+      schema: this.schemaName,
+      table: this.tableName,
+      record: wireData,
+      old_record: null,
+      metadata: { fromCache: false, hasPendingWrites: true },
+    });
+
+    return this.sdk.client.data.add.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
-      record: this.toWire(record),
+      record: wireData,
     });
   }
 
@@ -561,7 +645,7 @@ export class Document<T = any> {
   constructor(
     private tableName: string,
     private id: string | number,
-    private sdk: any,
+    private sdk: VanillaFirestore,
     private idField: string = "id",
     private schemaName: string = "public",
     private converter: FirestoreDataConverter<T> | null = null,
@@ -588,8 +672,12 @@ export class Document<T = any> {
     return this.converter.toFirestore(model);
   }
 
+  protected getStorageKey(): string {
+    return `doc:${this.schemaName}.${this.tableName}:${this.id}`;
+  }
+
   async get(): Promise<T | null> {
-    const row = await this.sdk.data.get.query({
+    const row = await this.sdk.client.data.get.query({
       tableName: this.tableName,
       schemaName: this.schemaName,
       id: this.id,
@@ -604,9 +692,36 @@ export class Document<T = any> {
   }
 
   async onSnapshot(callback: (snapshot: DbEvent<T | null>) => void) {
+    // 0. 嘗試從本地快取載入
+    if (this.sdk.persistence) {
+      try {
+        const cached = await this.sdk.persistence.get(this.getStorageKey());
+        if (cached) {
+          this.cache = cached;
+          callback({
+            timestamp: new Date().toISOString(),
+            txid: 0,
+            action: "initial",
+            schema: this.schemaName,
+            table: this.tableName,
+            record: this.cache,
+            old_record: null,
+            metadata: { fromCache: true, hasPendingWrites: false },
+          });
+        }
+      } catch (err) {
+        console.warn(`[Persistence] Failed to load cache for doc ${this.tableName}/${this.id}`, err);
+      }
+    }
+
     try {
       const initialDoc = await this.get();
       this.cache = initialDoc;
+      
+      // 更新快取 (若來自伺服器)
+      if (this.sdk.persistence && this.cache) {
+        this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => {});
+      }
 
       callback({
         timestamp: new Date().toISOString(),
@@ -616,6 +731,7 @@ export class Document<T = any> {
         table: this.tableName,
         record: this.cache,
         old_record: null,
+        metadata: { fromCache: false, hasPendingWrites: false },
       });
     } catch (err) {
       console.error(
@@ -624,33 +740,46 @@ export class Document<T = any> {
       );
     }
 
-    const subscription = this.sdk.onDbEvent.subscribe(
+    const handleEvent = (event: any, isOptimistic: boolean = false) => {
+      if (
+        event.table !== this.tableName ||
+        (event.schema && event.schema !== this.schemaName)
+      )
+        return;
+
+      if (event.txid && !isOptimistic) this.lastTxid = event.txid;
+
+      const currentRecord = this.toModel(event.record as any) as any;
+      const oldRecord = event.old_record as any;
+
+      const matchesId =
+        (currentRecord && currentRecord[this.idField] == this.id) ||
+        (oldRecord && oldRecord[this.idField] == this.id);
+
+      if (matchesId) {
+        this.cache = event.action === "delete" ? null : currentRecord;
+        
+        // 更新持久化快取 (非樂觀更新時)
+        if (!isOptimistic && this.sdk.persistence) {
+          if (event.action === "delete") {
+            this.sdk.persistence.remove(this.getStorageKey()).catch(() => {});
+          } else {
+            this.sdk.persistence.set(this.getStorageKey(), this.cache).catch(() => {});
+          }
+        }
+
+        callback({
+          ...event,
+          record: this.cache,
+          metadata: { fromCache: false, hasPendingWrites: isOptimistic },
+        });
+      }
+    };
+
+    const serverSub = this.sdk.client.onDbEvent.subscribe(
       { lastTxid: this.lastTxid },
       {
-        onData: (event: DbEvent<T>) => {
-          if (
-            event.table !== this.tableName ||
-            (event.schema && event.schema !== this.schemaName)
-          )
-            return;
-
-          if (event.txid) this.lastTxid = event.txid;
-
-          const currentRecord = this.toModel(event.record as any) as any;
-          const oldRecord = event.old_record as any;
-
-          const matchesId =
-            (currentRecord && currentRecord[this.idField] == this.id) ||
-            (oldRecord && oldRecord[this.idField] == this.id);
-
-          if (matchesId) {
-            this.cache = event.action === "delete" ? null : currentRecord;
-            callback({
-              ...event,
-              record: this.cache,
-            });
-          }
-        },
+        onData: (event: any) => handleEvent(event, false),
         onError: (err: any) => {
           console.error(
             `Subscription error for document ${this.tableName}/${this.id}:`,
@@ -660,7 +789,14 @@ export class Document<T = any> {
       },
     );
 
-    return () => subscription.unsubscribe();
+    const localSub = this.sdk.localEvents.subscribe((event) =>
+      handleEvent(event, true),
+    );
+
+    return () => {
+      serverSub.unsubscribe();
+      localSub();
+    };
   }
 
   async valueChanges(callback: (record: T | null) => void) {
@@ -674,18 +810,44 @@ export class Document<T = any> {
   }
 
   async update(record: Partial<T>): Promise<T | null> {
-    const updated = await this.sdk.data.update.mutate({
+    const wireData = this.toWire(record);
+
+    // 樂觀更新
+    this.sdk.localEvents.publish({
+      timestamp: new Date().toISOString(),
+      txid: 0,
+      action: "update",
+      schema: this.schemaName,
+      table: this.tableName,
+      record: { ...this.cache, ...wireData },
+      old_record: this.cache,
+      metadata: { fromCache: false, hasPendingWrites: true },
+    });
+
+    const updated = await this.sdk.client.data.update.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
       id: this.id,
       idField: this.idField,
-      record: this.toWire(record),
+      record: wireData,
     });
     return updated ? this.toModel(updated) : null;
   }
 
   async delete(): Promise<T | null> {
-    const deleted = await this.sdk.data.delete.mutate({
+    // 樂觀更新
+    this.sdk.localEvents.publish({
+      timestamp: new Date().toISOString(),
+      txid: 0,
+      action: "delete",
+      schema: this.schemaName,
+      table: this.tableName,
+      record: this.cache,
+      old_record: this.cache,
+      metadata: { fromCache: false, hasPendingWrites: true },
+    });
+
+    const deleted = await this.sdk.client.data.delete.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
       id: this.id,
@@ -695,12 +857,26 @@ export class Document<T = any> {
   }
 
   async set(record: Partial<T>, options: SetOptions = {}): Promise<T | null> {
-    const setRow = await this.sdk.data.set.mutate({
+    const wireData = this.toWire(record);
+
+    // 樂觀更新
+    this.sdk.localEvents.publish({
+      timestamp: new Date().toISOString(),
+      txid: 0,
+      action: options.merge ? "update" : "insert",
+      schema: this.schemaName,
+      table: this.tableName,
+      record: options.merge ? { ...this.cache, ...wireData } : wireData,
+      old_record: this.cache,
+      metadata: { fromCache: false, hasPendingWrites: true },
+    });
+
+    const setRow = await this.sdk.client.data.set.mutate({
       tableName: this.tableName,
       schemaName: this.schemaName,
       id: this.id,
       idField: this.idField,
-      record: this.toWire(record),
+      record: wireData,
       merge: options.merge ?? false,
     });
     return setRow ? this.toModel(setRow) : null;
@@ -713,7 +889,7 @@ export class Document<T = any> {
 export class WriteBatch {
   protected operations: any[] = [];
 
-  constructor(protected sdk: any) {}
+  constructor(protected sdk: VanillaFirestore) {}
 
   set<T = any>(
     doc: Document<T>,
@@ -757,7 +933,22 @@ export class WriteBatch {
 
   async commit(): Promise<void> {
     if (this.operations.length === 0) return;
-    await this.sdk.data.batch.mutate({ operations: this.operations });
+
+    // 樂觀更新：發布批量本地事件
+    this.operations.forEach((op) => {
+      this.sdk.localEvents.publish({
+        timestamp: new Date().toISOString(),
+        txid: 0,
+        action: op.type === "set" ? (op.merge ? "update" : "insert") : op.type,
+        schema: op.schemaName,
+        table: op.tableName,
+        record: op.record,
+        old_record: null,
+        metadata: { fromCache: false, hasPendingWrites: true },
+      });
+    });
+
+    await this.sdk.client.data.batch.mutate({ operations: this.operations });
     this.operations = [];
   }
 }
@@ -768,7 +959,7 @@ export class WriteBatch {
 export class Transaction extends WriteBatch {
   private preconditions = new Map<string, Filter[]>();
 
-  constructor(sdk: any) {
+  constructor(sdk: VanillaFirestore) {
     super(sdk);
   }
 
@@ -781,7 +972,7 @@ export class Transaction extends WriteBatch {
       const filters: Filter[] = Object.entries(data)
         .filter(([key, val]) => val !== null && typeof val !== "object") // 僅比對基礎型別
         .map(([key, value]) => ({ field: key, operator: "==", value }));
-      
+
       this.preconditions.set(this.getDocKey(doc), filters);
     }
     return data;
@@ -791,7 +982,11 @@ export class Transaction extends WriteBatch {
     return `${(doc as any).schemaName}.${(doc as any).tableName}.${(doc as any).id}`;
   }
 
-  set<T = any>(doc: Document<T>, record: Partial<T>, options: SetOptions = {}): Transaction {
+  set<T = any>(
+    doc: Document<T>,
+    record: Partial<T>,
+    options: SetOptions = {},
+  ): Transaction {
     super.set(doc, record, options);
     const filters = this.preconditions.get(this.getDocKey(doc));
     if (filters) {
@@ -822,9 +1017,24 @@ export class Transaction extends WriteBatch {
 export class VanillaFirestore {
   private trpc: any;
   private userId: string | null = null;
+  private _localEvents = new LocalEventBus();
+  private _persistence: PersistenceProvider | null = null;
 
   constructor(private url: string) {
     this.initTrpc();
+  }
+
+  get localEvents() {
+    return this._localEvents;
+  }
+
+  get persistence() {
+    return this._persistence;
+  }
+
+  async enablePersistence(): Promise<void> {
+    if (this._persistence) return;
+    this._persistence = new IndexedDBPersistence();
   }
 
   private initTrpc() {
@@ -887,16 +1097,16 @@ export class VanillaFirestore {
   }
 
   batch() {
-    return new WriteBatch(this.trpc);
+    return new WriteBatch(this);
   }
 
   async runTransaction<T>(
     updateFunction: (transaction: Transaction) => Promise<T>,
-    maxRetries: number = 5
+    maxRetries: number = 5,
   ): Promise<T> {
     let retries = 0;
     while (true) {
-      const transaction = new Transaction(this.trpc);
+      const transaction = new Transaction(this);
       try {
         const result = await updateFunction(transaction);
         await transaction.commit();
@@ -905,9 +1115,13 @@ export class VanillaFirestore {
         const isConflict = error.message?.includes("Precondition mismatch");
         if (isConflict && retries < maxRetries) {
           retries++;
-          console.warn(`🔄 Transaction conflict detected, retrying... (${retries}/${maxRetries})`);
+          console.warn(
+            `🔄 Transaction conflict detected, retrying... (${retries}/${maxRetries})`,
+          );
           // 指數避退增加成功率
-          await new Promise(res => setTimeout(res, Math.random() * 100 * retries));
+          await new Promise((res) =>
+            setTimeout(res, Math.random() * 100 * retries),
+          );
           continue;
         }
         throw error;
@@ -916,7 +1130,7 @@ export class VanillaFirestore {
   }
 
   collection<T = any>(name: string, schema: string = "public") {
-    return new Collection<T>(name, this.trpc, schema);
+    return new Collection<T>(name, this, schema);
   }
 
   doc<T = any>(
@@ -925,7 +1139,7 @@ export class VanillaFirestore {
     idField: string = "id",
     schema: string = "public",
   ) {
-    return new Document<T>(name, id, this.trpc, idField, schema);
+    return new Document<T>(name, id, this, idField, schema);
   }
 
   get client() {

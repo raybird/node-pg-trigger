@@ -21,6 +21,9 @@
 - [x] **自動快取與補丁 (Client-side Caching)**：
   - [x] 前端自動獲取初始快照 (Initial Snapshot Fetching)。
   - [x] 接收到變更事件時自動維護 Local State 並回傳完整快照。
+  - [x] **樂觀 UI 更新 (Optimistic Updates)**：寫入操作立即觸發本地回呼。
+  - [x] **快照元數據 (Snapshot Metadata)**：支援 `hasPendingWrites` 標記。
+  - [x] **離線持久化 (Offline Persistence)**：基於 IndexedDB 儲存快照，支援頁面重載即時顯示（`fromCache`）。
 - [x] **CRUD 操作支援**：
   - [x] `collection.add(data)` 實作。
   - [x] `doc.update(data)` 實作。

@@ -7,7 +7,7 @@
 - **🚀 即時事件廣播**: 使用 PostgreSQL 原生的 `LISTEN`/`NOTIFY` 機制，結合 tRPC Subscriptions，實現低延遲的事件推送。
 - **🔒 端到端型別安全**: 整個 API 層由 tRPC 構建，從後端到前端 SDK，享受完整的靜態型別檢查和自動完成，大幅減少執行時錯誤。
 - **🎛️ 動態觸發器管理**: 提供簡單易用的 tRPC API，讓您可以透過程式碼動態地為任何資料表建立、查詢和刪除事件通知觸發器。
-- **📦 前端 SDK**: 提供一個具備 Firestore 風格的 tRPC Client SDK，讓前端應用可以輕鬆整合。
+- **📦 前端 SDK**: 提供一個具備 Firestore 風格的 tRPC Client SDK，支援 **樂觀 UI 更新 (Optimistic Updates)** 與 **快照元數據 (Metadata)**。
 
 ## 📚 文件快速入口
 
@@ -93,6 +93,21 @@ sdk.collection("users").onSnapshot(({ action, record: data }) => {
 sdk.collection("users").valueChanges((data) => {
   console.log("目前所有使用者(valueChanges):", data);
 });
+
+**範例：利用元數據處理樂觀 UI**
+
+```typescript
+sdk.collection('messages').onSnapshot((snapshot) => {
+  const { record: messages, metadata } = snapshot;
+  
+  // 如果 hasPendingWrites 為 true，代表這是在伺服器確認前的本地預覽
+  if (metadata.hasPendingWrites) {
+    console.log('正在傳送訊息... (本地預覽中)');
+  }
+  
+  renderUI(messages);
+});
+```
 ```
 
 **範例：訂閱特定資料 (Document)**
@@ -243,6 +258,25 @@ await sdk.runTransaction(async (transaction) => {
   
   // 3. 寫入變更 (會自動執行樂觀鎖校驗)
   transaction.update(userRef, { points: newPoints });
+});
+```
+
+**範例：離線持久化 (Offline Persistence)**
+
+啟用持久化後，SDK 會在本地 IndexedDB 儲存資料快照。頁面重新整理後會立即顯示快取數據，隨後自動與伺服器同步。
+
+```typescript
+// 啟動離線持久化 (僅限瀏覽器)
+await sdk.enablePersistence();
+
+sdk.collection('posts').onSnapshot((snapshot) => {
+  const { record: posts, metadata } = snapshot;
+  
+  if (metadata.fromCache) {
+    console.log('正在顯示離線快取數據...');
+  }
+  
+  renderUI(posts);
 });
 ```
 

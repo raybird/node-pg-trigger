@@ -128,4 +128,18 @@ await sdk.runTransaction(async (transaction) => {
 });
 </code></pre>
 
+<h2>10. 離線持久化（Persistence）</h2>
+<p>啟用後，SDK 會將資料快照儲存在瀏覽器的 IndexedDB 中。重新載入頁面時會立即顯示舊數據，提昇極速啟動體驗。</p>
+<pre><code>
+// 啟動持久化
+await sdk.enablePersistence();
+
+sdk.collection('users').onSnapshot(({ record, metadata }) => {
+    if (metadata.fromCache) {
+        console.log('數據來自本地快取');
+    }
+    renderUI(record);
+});
+</code></pre>
+
 <p>更多 API 速查請見：<code>docs/firestore-realtime-cheatsheet.md</code></p>

@@ -58,10 +58,24 @@ const WriteInput = zod_1.z.object({
 });
 const UpdateInput = DocInput.extend({
     record: zod_1.z.record(zod_1.z.any()),
+    where: zod_1.z
+        .array(zod_1.z.object({
+        field: zod_1.z.string(),
+        operator: FilterOperator,
+        value: zod_1.z.any(),
+    }))
+        .optional(),
 });
 const SetInput = DocInput.extend({
     record: zod_1.z.record(zod_1.z.any()),
     merge: zod_1.z.boolean().optional().default(false),
+    where: zod_1.z
+        .array(zod_1.z.object({
+        field: zod_1.z.string(),
+        operator: FilterOperator,
+        value: zod_1.z.any(),
+    }))
+        .optional(),
 });
 const BatchInput = zod_1.z.object({
     operations: zod_1.z.array(zod_1.z.object({
@@ -72,6 +86,29 @@ const BatchInput = zod_1.z.object({
         idField: zod_1.z.string().optional().default("id"),
         record: zod_1.z.record(zod_1.z.any()).optional(),
         merge: zod_1.z.boolean().optional().default(false),
+        where: zod_1.z
+            .array(zod_1.z.object({
+            field: zod_1.z.string(),
+            operator: FilterOperator,
+            value: zod_1.z.any(),
+        }))
+            .optional(),
+    })),
+});
+const AggregateInput = zod_1.z.object({
+    tableName: zod_1.z.string().min(1),
+    schemaName: zod_1.z.string().optional().default("public"),
+    where: zod_1.z
+        .array(zod_1.z.object({
+        field: zod_1.z.string(),
+        operator: FilterOperator,
+        value: zod_1.z.any(),
+    }))
+        .optional(),
+    aggregations: zod_1.z.array(zod_1.z.object({
+        type: zod_1.z.enum(["count", "sum", "avg", "min", "max"]),
+        field: zod_1.z.string().optional(),
+        alias: zod_1.z.string(),
     })),
 });
 /**
@@ -289,6 +326,52 @@ exports.dataRouter = (0, trpc_1.router)({
         return result.rows[0] || null;
     })),
     /**
+     * Query: 聚合查詢 (Count, Sum, Avg, Min, Max)
+     */
+    aggregate: trpc_1.procedure.input(AggregateInput).query((_a) => __awaiter(void 0, [_a], void 0, function* ({ input, ctx }) {
+        const { tableName, schemaName, where, aggregations } = input;
+        const { clause: whereClause, params: whereParams } = buildWhereClause(where, 1);
+        const aggParts = aggregations.map((agg) => {
+            const field = agg.field ? `"${agg.field}"` : "*";
+            switch (agg.type) {
+                case "count":
+                    return `COUNT(${field}) AS "${agg.alias}"`;
+                case "sum":
+                    return `SUM(${field}) AS "${agg.alias}"`;
+                case "avg":
+                    return `AVG(${field}) AS "${agg.alias}"`;
+                case "min":
+                    return `MIN(${field}) AS "${agg.alias}"`;
+                case "max":
+                    return `MAX(${field}) AS "${agg.alias}"`;
+                default:
+                    throw new Error(`Unsupported aggregation type: ${agg.type}`);
+            }
+        });
+        const sql = `
+      SELECT ${aggParts.join(", ")}
+      FROM "${schemaName}"."${tableName}"
+      ${whereClause};
+    `;
+        if (ctx.user) {
+            const udb = yield db_1.db.withUser(ctx.user.id);
+            try {
+                const result = yield udb.query(sql, whereParams);
+                yield udb.commit();
+                return result.rows[0];
+            }
+            catch (error) {
+                yield udb.rollback();
+                throw new Error(`RLS Aggregate error for '${schemaName}.${tableName}': ${error.message}`);
+            }
+            finally {
+                udb.release();
+            }
+        }
+        const result = yield db_1.db.query(sql, whereParams);
+        return result.rows[0];
+    })),
+    /**
      * Mutation: 新增資料
      */
     add: trpc_1.procedure.input(WriteInput).mutation((_a) => __awaiter(void 0, [_a], void 0, function* ({ input, ctx }) {
@@ -317,14 +400,25 @@ exports.dataRouter = (0, trpc_1.router)({
      * Mutation: 更新資料
      */
     update: trpc_1.procedure.input(UpdateInput).mutation((_a) => __awaiter(void 0, [_a], void 0, function* ({ input, ctx }) {
-        const { tableName, schemaName, id, idField, record } = input;
+        const { tableName, schemaName, id, idField, record, where } = input;
         const { setClause, params, lastIndex } = prepareUpdate(record, 1);
-        const sql = `UPDATE "${schemaName}"."${tableName}" SET ${setClause} WHERE "${idField}" = $${lastIndex} RETURNING *;`;
-        const allParams = [...params, id];
+        // 處理額外的 WHERE 條件
+        const { clause: extraClause, params: extraParams } = buildWhereClause(where, lastIndex + 1);
+        const sql = `
+      UPDATE "${schemaName}"."${tableName}" 
+      SET ${setClause} 
+      WHERE "${idField}" = $${lastIndex} 
+      ${extraClause ? `AND ${extraClause.replace("WHERE ", "")}` : ""}
+      RETURNING *;
+    `;
+        const allParams = [...params, id, ...extraParams];
         if (ctx.user) {
             const udb = yield db_1.db.withUser(ctx.user.id);
             try {
                 const result = yield udb.query(sql, allParams);
+                if (result.rowCount === 0) {
+                    throw new Error("Update failed: Precondition mismatch or record not found.");
+                }
                 yield udb.commit();
                 return result.rows[0] || null;
             }
@@ -337,16 +431,21 @@ exports.dataRouter = (0, trpc_1.router)({
             }
         }
         const result = yield db_1.db.query(sql, allParams);
+        if (result.rowCount === 0) {
+            throw new Error("Update failed: Precondition mismatch or record not found.");
+        }
         return result.rows[0] || null;
     })),
     /**
      * Mutation: 設定資料（Firestore-like set，支援 merge）
      */
     set: trpc_1.procedure.input(SetInput).mutation((_a) => __awaiter(void 0, [_a], void 0, function* ({ input, ctx }) {
-        const { tableName, schemaName, id, idField, record, merge } = input;
+        const { tableName, schemaName, id, idField, record, merge, where } = input;
         const upsertRecord = Object.assign(Object.assign({}, record), { [idField]: id });
         const { columns, placeholders, params: insertParams, } = prepareWrite(upsertRecord, 1);
         const { setClause, params: mergeParams } = prepareUpdate(record, insertParams.length + 1);
+        // 處理額外的 WHERE 條件
+        const { clause: extraClause, params: extraParams } = buildWhereClause(where, insertParams.length + mergeParams.length + 1);
         const mergeSetClause = setClause || `"${idField}" = EXCLUDED."${idField}"`;
         const replaceSetClause = Object.keys(upsertRecord)
             .map((key) => `"${key}" = EXCLUDED."${key}"`)
@@ -357,15 +456,19 @@ exports.dataRouter = (0, trpc_1.router)({
       VALUES (${placeholders})
       ON CONFLICT ("${idField}")
       DO UPDATE SET ${onConflictSetClause}
+      ${extraClause ? `WHERE ${extraClause.replace("WHERE ", "")}` : ""}
       RETURNING *;
     `;
         const allParams = merge
-            ? [...insertParams, ...mergeParams]
-            : [...insertParams];
+            ? [...insertParams, ...mergeParams, ...extraParams]
+            : [...insertParams, ...extraParams];
         if (ctx.user) {
             const udb = yield db_1.db.withUser(ctx.user.id);
             try {
                 const result = yield udb.query(sql, allParams);
+                if (result.rowCount === 0) {
+                    throw new Error("Set failed: Precondition mismatch (record might have changed).");
+                }
                 yield udb.commit();
                 return result.rows[0] || null;
             }
@@ -378,18 +481,36 @@ exports.dataRouter = (0, trpc_1.router)({
             }
         }
         const result = yield db_1.db.query(sql, allParams);
+        if (result.rowCount === 0) {
+            throw new Error("Set failed: Precondition mismatch (record might have changed).");
+        }
         return result.rows[0] || null;
     })),
     /**
      * Mutation: 刪除資料
      */
-    delete: trpc_1.procedure.input(DocInput).mutation((_a) => __awaiter(void 0, [_a], void 0, function* ({ input, ctx }) {
-        const { tableName, schemaName, id, idField } = input;
-        const sql = `DELETE FROM "${schemaName}"."${tableName}" WHERE "${idField}" = $1 RETURNING *;`;
+    delete: trpc_1.procedure.input(DocInput.extend({
+        where: zod_1.z.array(zod_1.z.object({
+            field: zod_1.z.string(),
+            operator: FilterOperator,
+            value: zod_1.z.any()
+        })).optional()
+    })).mutation((_a) => __awaiter(void 0, [_a], void 0, function* ({ input, ctx }) {
+        const { tableName, schemaName, id, idField, where } = input;
+        const { clause: extraClause, params: extraParams } = buildWhereClause(where, 2);
+        const sql = `
+      DELETE FROM "${schemaName}"."${tableName}" 
+      WHERE "${idField}" = $1 
+      ${extraClause ? `AND ${extraClause.replace("WHERE ", "")}` : ""}
+      RETURNING *;
+    `;
         if (ctx.user) {
             const udb = yield db_1.db.withUser(ctx.user.id);
             try {
-                const result = yield udb.query(sql, [id]);
+                const result = yield udb.query(sql, [id, ...extraParams]);
+                if (result.rowCount === 0) {
+                    throw new Error("Delete failed: Precondition mismatch or record not found.");
+                }
                 yield udb.commit();
                 return result.rows[0] || null;
             }
@@ -401,7 +522,10 @@ exports.dataRouter = (0, trpc_1.router)({
                 udb.release();
             }
         }
-        const result = yield db_1.db.query(sql, [id]);
+        const result = yield db_1.db.query(sql, [id, ...extraParams]);
+        if (result.rowCount === 0) {
+            throw new Error("Delete failed: Precondition mismatch or record not found.");
+        }
         return result.rows[0] || null;
     })),
     /**
@@ -416,6 +540,8 @@ exports.dataRouter = (0, trpc_1.router)({
                     const upsertRecord = Object.assign(Object.assign({}, (op.record || {})), { [op.idField]: op.id });
                     const { columns, placeholders, params: insertParams, } = prepareWrite(upsertRecord, 1);
                     const { setClause, params: mergeParams } = prepareUpdate(op.record || {}, insertParams.length + 1);
+                    // 處理額外的 WHERE 條件
+                    const { clause: extraClause, params: extraParams } = buildWhereClause(op.where, insertParams.length + mergeParams.length + 1);
                     const mergeSetClause = setClause || `"${op.idField}" = EXCLUDED."${op.idField}"`;
                     const replaceSetClause = Object.keys(upsertRecord)
                         .map((key) => `"${key}" = EXCLUDED."${key}"`)
@@ -424,12 +550,17 @@ exports.dataRouter = (0, trpc_1.router)({
             INSERT INTO "${op.schemaName}"."${op.tableName}" (${columns})
             VALUES (${placeholders})
             ON CONFLICT ("${op.idField}")
-            DO UPDATE SET ${op.merge ? mergeSetClause : replaceSetClause};
+            DO UPDATE SET ${op.merge ? mergeSetClause : replaceSetClause}
+            ${extraClause ? `WHERE ${extraClause.replace("WHERE ", "")}` : ""}
+            RETURNING *;
           `;
                     const allParams = op.merge
-                        ? [...insertParams, ...mergeParams]
-                        : [...insertParams];
-                    yield udb.query(sql, allParams);
+                        ? [...insertParams, ...mergeParams, ...extraParams]
+                        : [...insertParams, ...extraParams];
+                    const result = yield udb.query(sql, allParams);
+                    if (result.rowCount === 0) {
+                        throw new Error(`Batch Set failed for ${op.tableName}: Precondition mismatch.`);
+                    }
                 }
                 else if (op.type === "set" || (op.type === "update" && !op.id)) {
                     // 注意：這裡簡化處理，set 如果沒 id 則視為 insert
@@ -439,12 +570,29 @@ exports.dataRouter = (0, trpc_1.router)({
                 }
                 else if (op.type === "update" && op.id) {
                     const { setClause, params, lastIndex } = prepareUpdate(op.record || {}, 1);
-                    const sql = `UPDATE "${op.schemaName}"."${op.tableName}" SET ${setClause} WHERE "${op.idField}" = $${lastIndex};`;
-                    yield udb.query(sql, [...params, op.id]);
+                    const { clause: extraClause, params: extraParams } = buildWhereClause(op.where, lastIndex + 1);
+                    const sql = `
+            UPDATE "${op.schemaName}"."${op.tableName}" 
+            SET ${setClause} 
+            WHERE "${op.idField}" = $${lastIndex}
+            ${extraClause ? `AND ${extraClause.replace("WHERE ", "")}` : ""}
+          `;
+                    const result = yield udb.query(sql, [...params, op.id, ...extraParams]);
+                    if (result.rowCount === 0) {
+                        throw new Error(`Batch Update failed for ${op.tableName}: Precondition mismatch.`);
+                    }
                 }
                 else if (op.type === "delete" && op.id) {
-                    const sql = `DELETE FROM "${op.schemaName}"."${op.tableName}" WHERE "${op.idField}" = $1;`;
-                    yield udb.query(sql, [op.id]);
+                    const { clause: extraClause, params: extraParams } = buildWhereClause(op.where, 2);
+                    const sql = `
+            DELETE FROM "${op.schemaName}"."${op.tableName}" 
+            WHERE "${op.idField}" = $1
+            ${extraClause ? `AND ${extraClause.replace("WHERE ", "")}` : ""}
+          `;
+                    const result = yield udb.query(sql, [op.id, ...extraParams]);
+                    if (result.rowCount === 0) {
+                        throw new Error(`Batch Delete failed for ${op.tableName}: Precondition mismatch.`);
+                    }
                 }
             }
             yield udb.commit();
