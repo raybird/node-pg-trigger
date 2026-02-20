@@ -17,17 +17,15 @@ body {
     margin: 0;
     color: var(--text-color);
     background-color: var(--bg-color);
-    /* 使用 clamp 實現流體字體 */
     font-size: clamp(16px, 1.8vw, 18px);
 }
 
 .app-container {
     display: flex;
     min-height: 100vh;
-    flex-direction: row;
 }
 
-/* 側邊欄優化 (Sidebar) */
+/* 側邊欄 (Sidebar) - 固定定位 */
 .sidebar {
     width: 280px;
     height: 100vh;
@@ -58,13 +56,13 @@ body {
     overflow-y: auto;
 }
 
-/* 主內容區偏移 */
+/* 主內容區 */
 .main-content {
     flex: 1;
     margin-left: 280px;
     width: calc(100% - 280px);
     padding: 3rem;
-    max-width: 100%;
+    max-width: 1000px;
     min-width: 0;
     transition: margin-left 0.3s ease;
 }
@@ -77,11 +75,11 @@ body {
     cursor: pointer;
     border-radius: 8px;
     transition: all 0.2s;
-    margin-bottom: 0.2rem;
+    font-size: 0.95rem;
 }
 
 .nav-link:hover {
-    background-color: rgba(0, 123, 255, 0.05);
+    background-color: rgba(0, 123, 255, 0.08);
     color: var(--primary-color);
 }
 
@@ -128,11 +126,17 @@ body {
     display: block;
 }
 
-/* 🏆 行動裝置響應式斷點 (1024px) */
+/* 內容樣式 */
+h1, h2, h3 { color: #000; margin-top: 2rem; }
+h1:first-child { margin-top: 0; }
+pre { background: #f4f4f4; padding: 1.2rem; border-radius: 8px; overflow-x: auto; font-size: 0.9rem; border: 1px solid #ddd; }
+code { font-family: monospace; background: rgba(0,0,0,0.05); padding: 0.2rem 0.4rem; border-radius: 4px; }
+img { max-width: 100%; height: auto; border-radius: 8px; }
+
+/* 🏆 響應式斷點 (1024px 以下為移動端) */
 @media (max-width: 1024px) {
     .sidebar {
         transform: translateX(-100%);
-        width: 280px;
     }
 
     .sidebar.open {
@@ -151,105 +155,8 @@ body {
     }
 }
 
-/* 內容樣式優化 */
-h1, h2, h3 { 
-    color: #000; 
-    margin-top: 2rem;
-}
-
-h1:first-child { margin-top: 0; }
-
-pre {
-    background: #f4f4f4;
-    padding: 1.2rem;
-    border-radius: 8px;
-    overflow-x: auto;
-    font-size: 0.9rem;
-    border: 1px solid #ddd;
-}
-
-code { 
-    font-family: 'Cascadia Code', 'Fira Code', monospace;
-    background: rgba(0,0,0,0.05);
-    padding: 0.2rem 0.4rem;
-    border-radius: 4px;
-}
-
-pre code {
-    background: none;
-    padding: 0;
-}
-
-img {
-    max-width: 100%;
-    height: auto;
-    border-radius: 8px;
-}
-
-/* 🏆 行動裝置響應式斷點 (768px) */
-@media (max-width: 768px) {
-    .app-container {
-        flex-direction: column;
-    }
-
-    .sidebar {
-        width: 100%;
-        height: auto;
-        position: static;
-        padding: 1rem;
-        border-right: none;
-        border-bottom: 1px solid var(--border-color);
-        transform: none !important; /* 移除隱藏機制 */
-    }
-
-    .sidebar h2 {
-        margin-bottom: 1rem;
-        font-size: 1.2rem;
-    }
-
-    .sidebar nav {
-        display: flex;
-        flex-wrap: wrap; /* 關鍵：自動折行 */
-        gap: 0.5rem;
-        overflow: visible;
-    }
-
-    .nav-link {
-        display: inline-block;
-        padding: 0.4rem 0.8rem;
-        font-size: 0.85rem;
-        background: #eee;
-        border-radius: 999px;
-        margin-bottom: 0;
-    }
-
-    .nav-link.active {
-        background-color: var(--primary-color);
-        color: white;
-    }
-
-    .main-content {
-        padding: 1.5rem;
-        margin-left: 0 !important;
-        width: 100% !important;
-    }
-
-    .hamburger-btn, .menu-overlay {
-        display: none !important; /* 移除漢堡模式，改用平舖 */
-    }
-
-    pre {
-        padding: 1rem;
-        font-size: 0.85rem;
-    }
-}
-
-/* 針對極小螢幕優化 */
 @media (max-width: 480px) {
-    .main-content {
-        padding: 1rem;
-    }
-    
+    .main-content { padding: 1rem; padding-top: 4.5rem; }
     h1 { font-size: 1.6rem; }
     h2 { font-size: 1.4rem; }
 }
