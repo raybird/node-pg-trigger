@@ -103,6 +103,8 @@ export class Query<T = any> {
   protected _limit: number = 100;
   protected _offset: number = 0;
   protected _limitToLast: boolean = false;
+  protected _startCursor: { value: any; inclusive: boolean } | null = null;
+  protected _endCursor: { value: any; inclusive: boolean } | null = null;
   protected lastTxid: string | number | null = null;
   protected cache: T[] = [];
   protected converter: FirestoreDataConverter<T> | null = null;
@@ -135,6 +137,26 @@ export class Query<T = any> {
     return this;
   }
 
+  startAt(value: any): Query<T> {
+    this._startCursor = { value, inclusive: true };
+    return this;
+  }
+
+  startAfter(value: any): Query<T> {
+    this._startCursor = { value, inclusive: false };
+    return this;
+  }
+
+  endAt(value: any): Query<T> {
+    this._endCursor = { value, inclusive: true };
+    return this;
+  }
+
+  endBefore(value: any): Query<T> {
+    this._endCursor = { value, inclusive: false };
+    return this;
+  }
+
   offset(n: number): Query<T> {
     this._offset = n;
     return this;
@@ -147,6 +169,10 @@ export class Query<T = any> {
     (next as any)._limit = this._limit;
     (next as any)._offset = this._offset;
     (next as any)._limitToLast = this._limitToLast;
+    (next as any)._startCursor = this._startCursor
+      ? { ...this._startCursor }
+      : null;
+    (next as any)._endCursor = this._endCursor ? { ...this._endCursor } : null;
     (next as any).lastTxid = this.lastTxid;
     (next as any).converter = converter;
     return next;
@@ -209,12 +235,49 @@ export class Query<T = any> {
     });
   }
 
-  private ensureLimitToLastReady() {
+  private ensureQueryReady() {
     if (this._limitToLast && this.sortItems.length === 0) {
       throw new Error(
         "limitToLast() 需要至少一個 orderBy()，以確保結果排序穩定。",
       );
     }
+
+    if ((this._startCursor || this._endCursor) && this.sortItems.length === 0) {
+      throw new Error(
+        "startAt/startAfter/endAt/endBefore 需要至少一個 orderBy()。",
+      );
+    }
+  }
+
+  private applyCursors(records: T[]): T[] {
+    if (!this._startCursor && !this._endCursor) return records;
+    if (this.sortItems.length === 0) return records;
+
+    const primarySort = this.sortItems[0];
+    const field = primarySort.field;
+    const direction = primarySort.direction;
+
+    return records.filter((row: any) => {
+      const value = row?.[field];
+
+      if (this._startCursor) {
+        const diff = this.compareValues(value, this._startCursor.value);
+        const normalized = direction === "asc" ? diff : -diff;
+        if (this._startCursor.inclusive ? normalized < 0 : normalized <= 0) {
+          return false;
+        }
+      }
+
+      if (this._endCursor) {
+        const diff = this.compareValues(value, this._endCursor.value);
+        const normalized = direction === "asc" ? diff : -diff;
+        if (this._endCursor.inclusive ? normalized > 0 : normalized >= 0) {
+          return false;
+        }
+      }
+
+      return true;
+    });
   }
 
   private compareValues(a: any, b: any): number {
@@ -244,21 +307,22 @@ export class Query<T = any> {
 
   private applyWindow(records: T[]): T[] {
     const sorted = this.applySort(records);
+    const cursorApplied = this.applyCursors(sorted);
     const start = Math.max(0, this._offset);
 
     if (this._limitToLast) {
-      const sliced = start > 0 ? sorted.slice(start) : sorted;
+      const sliced = start > 0 ? cursorApplied.slice(start) : cursorApplied;
       if (this._limit <= 0) return sliced;
       const begin = Math.max(0, sliced.length - this._limit);
       return sliced.slice(begin);
     }
 
-    if (this._limit <= 0) return sorted.slice(start);
-    return sorted.slice(start, start + this._limit);
+    if (this._limit <= 0) return cursorApplied.slice(start);
+    return cursorApplied.slice(start, start + this._limit);
   }
 
   async onSnapshot(callback: (snapshot: DbEvent<T[]>) => void) {
-    this.ensureLimitToLastReady();
+    this.ensureQueryReady();
 
     // 1. 獲取初始快照 (帶過濾)
     try {
@@ -378,7 +442,7 @@ export class Query<T = any> {
   }
 
   async get(): Promise<T[]> {
-    this.ensureLimitToLastReady();
+    this.ensureQueryReady();
 
     const initialSort = this._limitToLast
       ? this.sortItems.map((item) => ({
@@ -423,6 +487,10 @@ export class Collection<T = any> extends Query<T> {
     (next as any)._limit = this._limit;
     (next as any)._offset = this._offset;
     (next as any)._limitToLast = this._limitToLast;
+    (next as any)._startCursor = this._startCursor
+      ? { ...this._startCursor }
+      : null;
+    (next as any)._endCursor = this._endCursor ? { ...this._endCursor } : null;
     (next as any).lastTxid = this.lastTxid;
     (next as any).converter = converter;
     return next;

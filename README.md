@@ -9,6 +9,12 @@
 - **🎛️ 動態觸發器管理**: 提供簡單易用的 tRPC API，讓您可以透過程式碼動態地為任何資料表建立、查詢和刪除事件通知觸發器。
 - **📦 前端 SDK**: 提供一個具備 Firestore 風格的 tRPC Client SDK，讓前端應用可以輕鬆整合。
 
+## 📚 文件快速入口
+
+- SDK 即時訂閱/查詢 API 速查：`docs/firestore-realtime-cheatsheet.md`
+- 進階查詢運算子：`docs/firestore-query-operators.md`
+- `set(..., { merge: true })` 語意：`docs/firestore-set-merge.md`
+
 ## 🚀 快速開始
 
 ### 1. 環境設定
@@ -61,6 +67,8 @@ npm start
 ### 前端 SDK (Firestore 風格)
 
 我們提供了一個與 Firestore 語法高度一致的 SDK，讓您可以輕鬆地訂閱資料表或特定資料列的變動。
+
+若您偏好「先看 API 再回頭看範例」，可先閱讀速查文件 `docs/firestore-realtime-cheatsheet.md`。
 
 **範例：訂閱資料表 (Collection) - 自動維護快取**
 
@@ -292,10 +300,22 @@ console.log("啟用使用者數量:", activeCount);
 // 文件存在性檢查
 const exists = await sdk.doc("users", 1).exists();
 console.log("使用者 #1 是否存在:", exists);
+
+// Cursor 分頁：需先 orderBy
+const pageQuery = sdk
+  .collection("events")
+  .orderBy("created_at", "asc")
+  .startAfter("2026-02-20T00:00:00.000Z")
+  .endAt("2026-02-20T23:59:59.999Z")
+  .limit(20);
+
+const pageRows = await pageQuery.get();
+console.log("今日事件窗口:", pageRows.length);
 ```
 
 - **支援運算子**：`==`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `in`, `not-in`, `array-contains`, `array-contains-any`。
 - **分頁語法**：`limit(n)`、`offset(n)`、`limitToLast(n)`（需搭配 `orderBy`）。
+- **游標語法**：`startAt(v)`、`startAfter(v)`、`endAt(v)`、`endBefore(v)`（需搭配 `orderBy`）。
 - **模型映射**：支援 `withConverter()`，可集中處理欄位映射與型別轉換。
 - **聚合與存在性輔助**：支援 `query.count()` 與 `doc.exists()`。
 - **即時過濾**：當資料庫發生異動時，SDK 會在客戶端自動判斷該變更是否符合您的查詢條件，並動態更新結果集。

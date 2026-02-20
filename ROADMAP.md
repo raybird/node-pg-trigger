@@ -16,6 +16,7 @@
   - [x] `doc('users', 'id').onSnapshot(callback)` 單一文件監聽。
   - [x] `valueChanges(callback)` 與 `subscribe(callback)` 命名別名，降低框架遷移摩擦。
   - [x] `withConverter()` 模型映射，支援 from/to Firestore 欄位轉換。
+  - [x] SDK Realtime Cheatsheet 文件，集中整理常用 API 與解除訂閱模式。
 - [x] **自動快取與補丁 (Client-side Caching)**：
   - [x] 前端自動獲取初始快照 (Initial Snapshot Fetching)。
   - [x] 接收到變更事件時自動維護 Local State 並回傳完整快照。
@@ -28,6 +29,7 @@
 - [x] **進階查詢支援 (Querying)**：
   - [x] 實作 `where()`, `orderBy()`, `limit()` 鏈式語法。
   - [x] 補齊 Firestore 風格 `limitToLast()` 查詢窗口（需搭配 `orderBy`）。
+  - [x] 補齊 Firestore 風格 cursor 視窗 `startAt/startAfter/endAt/endBefore`（需搭配 `orderBy`）。
   - [x] 提供 `count()` 查詢聚合輔助。
   - [x] Server 端支援動態 SQL 過濾條件生成。
   - [x] Client 端支援實時事件的條件匹配 (Event Filtering)。
