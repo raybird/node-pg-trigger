@@ -27,17 +27,20 @@ body {
     flex-direction: row;
 }
 
-/* 側邊欄響應式優化 */
+/* 側邊欄優化 (Sidebar) */
 .sidebar {
     width: 280px;
-    background: var(--nav-bg);
-    border-right: 1px solid var(--border-color);
-    padding: 2rem 1.5rem;
-    position: sticky;
-    top: 0;
     height: 100vh;
-    overflow-y: auto;
-    flex-shrink: 0;
+    background: var(--nav-bg);
+    padding: 2rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    left: 0;
+    top: 0;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.05);
+    z-index: 1000;
+    transition: transform 0.3s ease;
 }
 
 .sidebar h2 {
@@ -47,11 +50,23 @@ body {
     color: var(--primary-color);
 }
 
+.sidebar nav {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* 主內容區偏移 */
 .main-content {
     flex: 1;
+    margin-left: 280px;
+    width: calc(100% - 280px);
     padding: 3rem;
-    max-width: 900px;
-    min-width: 0; /* 關鍵：防止 flex 項目溢出 */
+    max-width: 100%;
+    min-width: 0;
+    transition: margin-left 0.3s ease;
 }
 
 .nav-link {
@@ -74,6 +89,66 @@ body {
     background-color: var(--primary-color);
     color: white;
     font-weight: bold;
+}
+
+/* 漢堡按鈕 (手機版) */
+.hamburger-btn {
+    display: none;
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1100;
+    background: var(--primary-color);
+    color: white;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border: none;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+}
+
+/* 遮罩層 */
+.menu-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
+    z-index: 900;
+}
+
+.menu-overlay.open {
+    display: block;
+}
+
+/* 🏆 行動裝置響應式斷點 (1024px) */
+@media (max-width: 1024px) {
+    .sidebar {
+        transform: translateX(-100%);
+        width: 280px;
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .main-content {
+        margin-left: 0;
+        width: 100%;
+        padding: 1.5rem;
+        padding-top: 5rem;
+    }
+
+    .hamburger-btn {
+        display: flex;
+    }
 }
 
 /* 內容樣式優化 */
