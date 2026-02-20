@@ -4,7 +4,6 @@ export class App extends BaseComponent {
     constructor() {
         super();
         this.state = {
-            isMenuOpen: false,
             currentDoc: 'intro',
             docs: [
                 { id: 'intro', title: '🚀 簡介與快速開始' },
@@ -22,20 +21,11 @@ export class App extends BaseComponent {
         super.connectedCallback();
     }
 
-    toggleMenu() {
-        this.setState({ isMenuOpen: !this.state.isMenuOpen });
-    }
-
-    closeMenu() {
-        this.setState({ isMenuOpen: false });
-    }
-
     async loadDoc(id) {
         try {
             const response = await fetch(`./docs/${id}.html`);
             const html = await response.ok ? await response.text() : '<h1>404</h1>文件未找到';
-            // 點擊後自動關閉選單 (手機版)
-            this.setState({ currentDoc: id, content: html, isMenuOpen: false });
+            this.setState({ currentDoc: id, content: html });
         } catch (err) {
             this.setState({ content: '載入錯誤' });
         }
@@ -44,17 +34,7 @@ export class App extends BaseComponent {
     template() {
         return this.html`
             <div class="app-container">
-                <!-- 手機版漢堡按鈕 -->
-                <button class="hamburger-btn" aria-label="Toggle Menu" onclick="this.closest('x-app').toggleMenu()">
-                    <span style="font-size: 1.2rem;">${this.state.isMenuOpen ? '✕' : '☰'}</span>
-                </button>
-
-                <!-- 手機版遮罩層 -->
-                <div class="menu-overlay ${this.state.isMenuOpen ? 'open' : ''}" 
-                     onclick="this.closest('x-app').closeMenu()"></div>
-
-                <!-- 側邊欄 -->
-                <aside class="sidebar ${this.state.isMenuOpen ? 'open' : ''}">
+                <aside class="sidebar">
                     <div class="sidebar-header">
                         <h2>PG Trigger</h2>
                     </div>
@@ -68,7 +48,6 @@ export class App extends BaseComponent {
                     </nav>
                 </aside>
 
-                <!-- 主內容區 -->
                 <main class="main-content">
                     ${this.state.content}
                 </main>
