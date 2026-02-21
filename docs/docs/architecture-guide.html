@@ -1,60 +1,69 @@
-# 🏗️ 架構設計與部署最佳實踐 (Architecture & Deployment)
+<h1>🏗️ 架構設計與部署最佳實踐 (Architecture & Deployment)</h1>
 
-`node-pg-trigger` 不僅是一個 SDK，它更是一套將 PostgreSQL 轉化為實時資料庫的完整架構方案。本指南將詳解核心設計模式、安全性策略以及如何在生產環境中進行規模化部署。
+<p><code>node-pg-trigger</code> 不僅是一個 SDK，它更是一套將 PostgreSQL 轉化為實時資料庫的完整架構方案。本指南將詳解核心設計模式、安全性策略以及如何在生產環境中進行規模化部署。</p>
 
----
+<hr>
 
-## 🌟 核心架構：LISTEN/NOTIFY 橋接器
+<h2>🌟 核心架構：LISTEN/NOTIFY 橋接器</h2>
 
-本系統的核心是利用 PostgreSQL 原生的 `LISTEN/NOTIFY` 機制。
+<p>本系統的核心是利用 PostgreSQL 原生的 <code>LISTEN/NOTIFY</code> 機制。</p>
 
-1.  **資料庫層 (PostgreSQL)**: 透過 Trigger 監控資料異動，並將變更以 JSON 格式發送至指定的 Channel。
-2.  **服務器層 (Node.js)**: 透過 `pg-listen` 常駐連線接收事件，並透過 tRPC Subscriptions 將數據推送至前端。
-3.  **分發層 (Redis)**: 當存在多個後端節點時，使用 Redis Pub/Sub 同步事件，確保全域一致性。
+<ol>
+    <li><strong>資料庫層 (PostgreSQL)</strong>: 透過 Trigger 監控資料異動，並將變更以 JSON 格式發送至指定的 Channel。</li>
+    <li><strong>服務器層 (Node.js)</strong>: 透過 <code>pg-listen</code> 常駐連線接收事件，並透過 tRPC Subscriptions 將數據推送至前端。</li>
+    <li><strong>分發層 (Redis)</strong>: 當存在多個後端節點時，使用 Redis Pub/Sub 同步事件，確保全域一致性。</li>
+</ol>
 
----
+<hr>
 
-## 🔒 安全性實踐：Row-Level Security (RLS)
+<h2>🔒 安全性實踐：Row-Level Security (RLS)</h2>
 
-我們強制建議與 PostgreSQL 的 RLS 搭配使用，以確保前端訂閱的數據安全性。
+<p>我們強制建議與 PostgreSQL 的 RLS 搭配使用，以確保前端訂閱的數據安全性。</p>
 
-### 1. SDK 身分注入
-在前端呼叫 `sdk.auth(token)`，後端會將此 token (或解析後的 user_id) 注入該資料庫連線的 Session 中。
+<h3>1. SDK 身分注入</h3>
+<p>在前端呼叫 <code>sdk.auth(token)</code>，後端會將此 token (或解析後的 user_id) 注入該資料庫連線的 Session 中。</p>
 
-### 2. SQL 權限定義範例
-```sql
+<h3>2. SQL 權限定義範例</h3>
+<pre><code>
 -- 僅允許使用者讀取屬於自己的文章
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY post_user_policy ON posts
 FOR SELECT
 USING (user_id = current_setting('request.user_id')::text);
-```
+</code></pre>
 
----
+<hr>
 
-## ⚡ 規模化部署 (Scaling)
+<h2>⚡ 規模化部署 (Scaling)</h2>
 
-### 1. 水平擴展
-設定 `REDIS_URL` 環境變數。系統會自動切換至分佈式事件總線模式。這允許您在負載平衡器 (Nginx/ALB) 後方部署多個 Node.js 實例。
+<h3>1. 水平擴展</h3>
+<p>設定 <code>REDIS_URL</code> 環境變數。系統會自動切換至分佈式事件總線模式。這允許您在負載平衡器 (Nginx/ALB) 後方部署多個 Node.js 實例。</p>
 
-### 2. 資料庫負載
-`LISTEN/NOTIFY` 的開銷極低，但 Trigger 的執行會佔用微量事務資源。建議：
-- 僅對需要實時同步的欄位設定 Trigger。
-- 使用 `audit_log` 記錄重要變更，作為斷線追補的數據源。
+<h3>2. 資料庫負載</h3>
+<p><code>LISTEN/NOTIFY</code> 的開銷極低，但 Trigger 的執行會佔用微量事務資源。建議：</p>
+<ul>
+    <li>僅對需要實時同步的欄位設定 Trigger。</li>
+    <li>使用 <code>audit_log</code> 記錄重要變更，作為斷線追補的數據源。</li>
+</ul>
 
----
+<hr>
 
-## 🛠️ 部署檢核清單
+<h2>🛠️ 部署檢核清單</h2>
 
-- [ ] **資料庫權限**: 確保連線帳號具備 `TRIGGER` 與 `LISTEN/NOTIFY` 權限。
-- [ ] **持久化連線**: 使用 `pm2` 或 Docker 確保 Node.js 進程崩潰後能立即重啟並恢復訂閱。
-- [ ] **環境變數**:
-    - `DATABASE_URL`: 主資料庫連線。
-    - `REDIS_URL`: (選填) 用於水平擴展。
-    - `JWT_SECRET`: 若使用內建驗證機制。
+<ul>
+    <li>[ ] <strong>資料庫權限</strong>: 確保連線帳號具備 <code>TRIGGER</code> 與 <code>LISTEN/NOTIFY</code> 權限。</li>
+    <li>[ ] <strong>持久化連線</strong>: 使用 <code>pm2</code> 或 Docker 確保 Node.js 進程崩潰後能立即重啟並恢復訂閱。</li>
+    <li>[ ] <strong>環境變數</strong>:
+        <ul>
+            <li><code>DATABASE_URL</code>: 主資料庫連線。</li>
+            <li><code>REDIS_URL</code>: (選填) 用於水平擴展。</li>
+            <li><code>JWT_SECRET</code>: 若使用內建驗證機制。</li>
+        </ul>
+    </li>
+</ul>
 
----
+<hr>
 
-## 🎓 學習資源
-您可以參考 `docs/sdk-usage.html` 了解前端 API 調用詳情，或查看 `example_app/` 獲取完整的實戰範例。
+<h2>🎓 學習資源</h2>
+<p>您可以參考 <code>docs/sdk-usage.html</code> 了解前端 API 調用詳情，或查看 <code>example_app/</code> 獲取完整的實戰範例。</p>

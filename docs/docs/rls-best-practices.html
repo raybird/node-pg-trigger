@@ -1,24 +1,26 @@
-# 🔒 Row-Level Security (RLS) 最佳實踐指南
+<h1>🔒 Row-Level Security (RLS) 最佳實踐指南</h1>
 
-在 `node-pg-trigger` 的即時推送架構中，PostgreSQL 的 Row-Level Security (RLS) 是確保數據安全的核心。本指南將說明如何在生產環境中建立嚴謹的安全策略。
+<p>在 <code>node-pg-trigger</code> 的即時推送架構中，PostgreSQL 的 Row-Level Security (RLS) 是確保數據安全的核心。本指南將說明如何在生產環境中建立嚴謹的安全策略。</p>
 
----
+<hr>
 
-## 🌟 核心機制：身分注入流程
+<h2>🌟 核心機制：身分注入流程</h2>
 
-1.  **前端身分識別**: 使用者在 SDK 呼叫 `sdk.auth('user_id_or_token')`。
-2.  **tRPC Context 轉發**: 後端接收並驗證身分，將其存儲在連線 Context 中。
-3.  **資料庫 Session 綁定**: 在執行查詢或處理訂閱前，系統會執行 `SET LOCAL "request.user_id" = '...'`。
-4.  **RLS 策略生效**: 資料庫根據 Session 中的 `request.user_id` 動態過濾每一行紀錄。
+<ol>
+    <li><strong>前端身分識別</strong>: 使用者在 SDK 呼叫 <code>sdk.auth('user_id_or_token')</code>。</li>
+    <li><strong>tRPC Context 轉發</strong>: 後端接收並驗證身分，將其存儲在連線 Context 中。</li>
+    <li><strong>資料庫 Session 綁定</strong>: 在執行查詢或處理訂閱前，系統會執行 <code>SET LOCAL "request.user_id" = '...'</code>。</li>
+    <li><strong>RLS 策略生效</strong>: 資料庫根據 Session 中的 <code>request.user_id</code> 動態過濾每一行紀錄。</li>
+</ol>
 
----
+<hr>
 
-## 🛠️ 生產環境常用策略範例
+<h2>🛠️ 生產環境常用策略範例</h2>
 
-### 1. 私有數據保護 (僅擁有者可讀寫)
-適用於個人設定、私有筆記等。
+<h3>1. 私有數據保護 (僅擁有者可讀寫)</h3>
+<p>適用於個人設定、私有筆記等。</p>
 
-```sql
+<pre><code>
 -- 啟用 RLS
 ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
 
@@ -27,12 +29,12 @@ CREATE POLICY profile_owner_policy ON user_profiles
 FOR ALL
 TO authenticated
 USING (id::text = current_setting('request.user_id', true));
-```
+</code></pre>
 
-### 2. 共享協作模式 (團隊成員可讀)
-適用於項目管理、群組聊天等。
+<h3>2. 共享協作模式 (團隊成員可讀)</h3>
+<p>適用於項目管理、群組聊天等。</p>
 
-```sql
+<pre><code>
 ALTER TABLE project_tasks ENABLE ROW LEVEL SECURITY;
 
 -- 建立策略：檢查使用者是否在該項目的成員名單中
@@ -45,12 +47,12 @@ USING (
     AND user_id::text = current_setting('request.user_id', true)
   )
 );
-```
+</code></pre>
 
-### 3. 公開數據但受限寫入 (唯讀公眾，擁有者可更)
-適用於部落格文章、公開評論。
+<h3>3. 公開數據但受限寫入 (唯讀公眾，擁有者可更)</h3>
+<p>適用於部落格文章、公開評論。</p>
 
-```sql
+<pre><code>
 ALTER TABLE blog_posts ENABLE ROW LEVEL SECURITY;
 
 -- 公開讀取
@@ -62,17 +64,19 @@ USING (status = 'published');
 CREATE POLICY owner_update_policy ON blog_posts
 FOR UPDATE
 USING (author_id::text = current_setting('request.user_id', true));
-```
+</code></pre>
 
----
+<hr>
 
-## ⚡ 效能優化建議
+<h2>⚡ 效能優化建議</h2>
 
-*   **索引優化**: 確保 RLS `USING` 子句中引用的欄位（如 `user_id`, `project_id`）具備索引，否則大量併發訂閱時會造成 CPU 負載升高。
-*   **避免複雜子查詢**: 盡量使用簡單的欄位比對。若需跨表檢查權限，考慮使用緩存或在應用程式層預先過濾。
-*   **預設拒絕**: 建議將 `ALTER TABLE ... FORCE ROW LEVEL SECURITY` 設為常態，防止管理員權限意外洩漏數據。
+<ul>
+    <li><strong>索引優化</strong>: 確保 RLS <code>USING</code> 子句中引用的欄位（如 <code>user_id</code>, <code>project_id</code>）具備索引，否則大量併發訂閱時會造成 CPU 負載升高。</li>
+    <li><strong>避免複雜子查詢</strong>: 盡量使用簡單的欄位比對。若需跨表檢查權限，考慮使用緩存或在應用程式層預先過濾。</li>
+    <li><strong>預設拒絕</strong>: 建議將 <code>ALTER TABLE ... FORCE ROW LEVEL SECURITY</code> 設為常態，防止管理員權限意外洩漏數據。</li>
+</ul>
 
----
+<hr>
 
-## 🎓 總結
-RLS 讓 `node-pg-trigger` 具備了「數據庫即防火牆」的能力。開發者不需在 Node.js 中編寫複雜的過濾邏輯，只需在 SQL 層定義好規則，即可確保即時推送的絕對安全。
+<h2>🎓 總結</h2>
+<p>RLS 讓 <code>node-pg-trigger</code> 具備了「數據庫即防火牆」的能力。開發者不需在 Node.js 中編寫複雜的過濾邏輯，只需在 SQL 層定義好規則，即可確保即時推送的絕對安全。</p>
