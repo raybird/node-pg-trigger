@@ -1,6 +1,7 @@
 import { router, procedure } from './trpc';
 import { triggerRouter } from './procedures/trigger';
 import { dataRouter } from './procedures/data';
+import { healthRouter } from './procedures/health';
 import { observable } from '@trpc/server/observable';
 import { dbNotificationListener } from './lib/listener';
 import { db } from './lib/db';
@@ -17,6 +18,11 @@ export const appRouter = router({
    * 掛載 data 相關的程序 (用於獲取初始快照)
    */
   data: dataRouter,
+
+  /**
+   * 掛載 health 相關程序
+   */
+  health: healthRouter,
 
   /**
    * Subscription: 訂閱資料庫事件 (支援斷線追補)
