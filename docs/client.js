@@ -32,7 +32,8 @@ function displayNotification(data) {
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
         console.log('Connecting to server...');
-        trpc.trigger.onNew.subscribe(undefined, {
+        // 修正：使用正確的 subscription 名稱 onDbEvent
+        trpc.onDbEvent.subscribe(undefined, {
             onStarted() {
                 console.log('Subscription started');
                 displayNotification({ status: 'Subscribed and waiting for events...' });

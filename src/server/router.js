@@ -13,6 +13,7 @@ exports.appRouter = void 0;
 const trpc_1 = require("./trpc");
 const trigger_1 = require("./procedures/trigger");
 const data_1 = require("./procedures/data");
+const health_1 = require("./procedures/health");
 const observable_1 = require("@trpc/server/observable");
 const db_1 = require("./lib/db");
 const event_bus_1 = require("./lib/event-bus");
@@ -26,6 +27,10 @@ exports.appRouter = (0, trpc_1.router)({
      * 掛載 data 相關的程序 (用於獲取初始快照)
      */
     data: data_1.dataRouter,
+    /**
+     * 掛載 health 相關程序
+     */
+    health: health_1.healthRouter,
     /**
      * Subscription: 訂閱資料庫事件 (支援斷線追補)
      */

@@ -354,20 +354,20 @@ export class Query<T = any> {
         this.cache = [...this.cache, record];
         changed = true;
       } else if (event.action === "update") {
-        const id = record.id;
+        const id = (record as any).id;
         const exists = this.cache.some((item: any) => item.id === id);
         if (isMatch) {
           if (this._include && !isOptimistic) record = await this.patchRelations(record);
-          this.cache = exists ? this.cache.map(i => i.id === id ? record : i) : [...this.cache, record];
+          this.cache = exists ? this.cache.map((i: any) => i.id === id ? record : i) : [...this.cache, record];
           changed = true;
         } else if (exists) {
-          this.cache = this.cache.filter(i => i.id !== id);
+          this.cache = this.cache.filter((i: any) => i.id !== id);
           changed = true;
         }
       } else if (event.action === "delete") {
         const id = (event.old_record as any)?.id;
-        if (this.cache.some(i => i.id === id)) {
-          this.cache = this.cache.filter(i => i.id !== id);
+        if (this.cache.some((i: any) => i.id === id)) {
+          this.cache = this.cache.filter((i: any) => i.id !== id);
           changed = true;
         }
       }

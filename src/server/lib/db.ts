@@ -1,4 +1,4 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool, QueryResultRow } from 'pg';
 
 // 從環境變數中讀取資料庫連線設定
 const pool = new Pool({
@@ -13,7 +13,7 @@ export const db = {
   /**
    * 一般查詢
    */
-  query: <T>(text: string, params?: any[]) => pool.query<T>(text, params),
+  query: <T extends QueryResultRow>(text: string, params?: any[]) => pool.query<T>(text, params),
 
   /**
    * 具備使用者 Context 的查詢 (用於 RLS)
@@ -27,7 +27,7 @@ export const db = {
       await client.query(`SET LOCAL "request.user_id" = $1`, [userId]);
       
       return {
-        query: <T>(text: string, params?: any[]) => client.query<T>(text, params),
+        query: <T extends QueryResultRow>(text: string, params?: any[]) => client.query<T>(text, params),
         commit: () => client.query('COMMIT'),
         rollback: () => client.query('ROLLBACK'),
         release: () => client.release(),
@@ -56,7 +56,7 @@ export const db = {
       const result = await client.query(sql, [idValue]);
       
       await client.query('COMMIT');
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('[RLS Check Error]', err);

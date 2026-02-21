@@ -27,16 +27,17 @@ function displayNotification(data: any) {
 async function main() {
   console.log('Connecting to server...');
   
-  trpc.trigger.onNew.subscribe(undefined, {
+  // 修正：使用正確的 subscription 名稱 onDbEvent
+  (trpc as any).onDbEvent.subscribe(undefined, {
     onStarted() {
       console.log('Subscription started');
       displayNotification({ status: 'Subscribed and waiting for events...' });
     },
-    onData(data) {
+    onData(data: any) {
       console.log('Received data:', data);
       displayNotification(data);
     },
-    onError(err) {
+    onError(err: any) {
       console.error('Subscription error:', err);
       displayNotification({ error: 'Subscription failed', message: err.message });
     },

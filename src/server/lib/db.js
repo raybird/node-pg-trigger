@@ -50,6 +50,7 @@ exports.db = {
      * 檢查特定記錄是否符合使用者的 RLS 權限
      */
     checkRls: (userId_1, tableName_1, record_1, ...args_1) => __awaiter(void 0, [userId_1, tableName_1, record_1, ...args_1], void 0, function* (userId, tableName, record, idField = 'id') {
+        var _a;
         const client = yield pool.connect();
         try {
             yield client.query('BEGIN');
@@ -62,7 +63,7 @@ exports.db = {
             const sql = `SELECT 1 FROM "${tableName}" WHERE "${idField}" = $1 LIMIT 1;`;
             const result = yield client.query(sql, [idValue]);
             yield client.query('COMMIT');
-            return result.rowCount > 0;
+            return ((_a = result.rowCount) !== null && _a !== void 0 ? _a : 0) > 0;
         }
         catch (err) {
             yield client.query('ROLLBACK');
