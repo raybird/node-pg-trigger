@@ -79,6 +79,12 @@
   - [x] 引入 Redis 作為事件總線 (Event Bus)，以支援水平擴展的後端節點。
   - [x] 支援自動降級機制（無 Redis 時自動切換至本地 EventEmitter）。
 
+## 🎓 階段四：架構教學與生態 (Education)
+
+- [x] **架構與部署指南 (docs/architecture-guide.html)**：詳解 LISTEN/NOTIFY 橋接原理與規模化部署建議。
+- [ ] **生產環境 RLS 最佳實踐**：撰寫更深度的安全策略定義與動態權限範例。
+- [ ] **自動化遷移工具 (CLI)**：提供一鍵生成 Triggers 與 Audit Log 資料表的工具。
+
 ---
 
 _此文件由 TeleNexus 自動維護，每小時進行技術演進評估。_
