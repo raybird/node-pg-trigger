@@ -83,7 +83,8 @@
 
 - [x] **架構與部署指南 (docs/architecture-guide.html)**：詳解 LISTEN/NOTIFY 橋接原理與規模化部署建議。
 - [x] **生產環境 RLS 最佳實踐 (docs/rls-best-practices.html)**：撰寫深度的安全策略定義與多種業務場景範例。
-- [ ] **自動化遷移工具 (CLI)**：提供一鍵生成 Triggers 與 Audit Log 資料表的工具。
+- [x] **自動化遷移工具 (src/server/lib/migrator.ts)**：實作自動化建立 Triggers 與 Audit Log 的腳本。
+- [x] **遷移指南 (docs/migrations-guide.html)**：詳解自動化與手動配置資料庫結構的流程。
 
 ---
 

@@ -1,0 +1,51 @@
+<h1>🛠️ 自動化遷移與基礎設施 (CLI & Migrations)</h1>
+
+<p><code>node-pg-trigger</code> 提供了一套自動化工具，幫助開發者快速在現有的 PostgreSQL 資料庫中建立實時推送所需的基礎設施。</p>
+
+<hr>
+
+<h2>🌟 核心組件：Audit Log 與 Triggers</h2>
+
+<p>為了實現斷線追補與即時監控，系統需要在資料庫層進行以下配置：</p>
+
+<ul>
+    <li><strong>audit_log 表</strong>: 持久化所有資料異動，提供 <code>txid</code> 序號。</li>
+    <li><strong>通用 Trigger 函式</strong>: 負責在每次寫入時封裝 JSON 並執行 <code>NOTIFY</code>。</li>
+</ul>
+
+<hr>
+
+<h2>🚀 使用 Migrator 自動初始化</h2>
+
+<p>您可以在後端啟動時調用內建的 <code>runMigrations()</code> 方法：</p>
+
+<pre><code>
+import { runMigrations } from 'node-pg-trigger/server';
+
+// 啟動時自動檢查並建立必要結構
+await runMigrations();
+</code></pre>
+
+<p>該腳本會自動執行以下 SQL 操作：</p>
+<ol>
+    <li>建立 <code>audit_log</code> 資料表（若不存在）。</li>
+    <li>定義 <code>notify_db_event()</code> PL/pgSQL 函式。</li>
+</ol>
+
+<hr>
+
+<h2>📂 手動配置範例</h2>
+
+<p>若您偏好手動管理 Schema，可以參考以下指令為特定資料表啟用實時功能：</p>
+
+<pre><code>
+-- 為 'posts' 資料表綁定觸發器
+CREATE TRIGGER posts_notify_trigger
+AFTER INSERT OR UPDATE OR DELETE ON posts
+FOR EACH ROW EXECUTE FUNCTION notify_db_event();
+</code></pre>
+
+<hr>
+
+<h2>🎓 接下來</h2>
+<p>配置完成後，即可使用 <a href="#/docs/sdk-usage">SDK 使用指南</a> 中介紹的 <code>onSnapshot</code> 方法開始接收數據。</p>
