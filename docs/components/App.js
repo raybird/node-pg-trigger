@@ -11,6 +11,7 @@ export class App extends BaseComponent {
                 { id: 'sdk-usage', title: '💎 SDK 使用指南' },
                 { id: 'relational-data', title: '🔗 關聯資料查詢' },
                 { id: 'rls-security', title: '🔒 身分驗證與 RLS' },
+                { id: 'rls-best-practices', title: '🛡️ RLS 最佳實踐' },
                 { id: 'architecture-guide', title: '🏗️ 架構與部署指南' }
             ],
             content: '載入中...'
