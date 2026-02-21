@@ -1,31 +1,38 @@
-<h1>🔒 身分驗證與 RLS</h1>
-<p>本專案原生支援 PostgreSQL 的 <strong>Row-Level Security (RLS)</strong>，這意味著您可以在資料庫層級實現真正的資料隔離。</p>
+<h1>🔒 身分驗證與 RLS (Auth & Security)</h1>
 
-<h2>1. 運作原理</h2>
-<ol>
-    <li>前端 SDK 透過 <code>sdk.auth(userId)</code> 設定身分。</li>
-    <li>後端伺服器在執行 SQL 前，會先執行 <code>SET LOCAL "request.user_id" = '...'</code>。</li>
-    <li>PostgreSQL 的 RLS 策略會自動攔截不屬於該使用者的資料。</li>
-</ol>
+<p>安全是實時應用的重中之重。我們利用 PostgreSQL 的 Row-Level Security (RLS) 確保每個使用者只能看到他們有權存取的數據。</p>
 
-<h2>2. 資料庫端設定範例</h2>
-<p>假設您有一張 <code>private_notes</code> 資料表，您希望使用者只能看到自己的筆記：</p>
-<pre><code>-- 1. 啟用 RLS
-ALTER TABLE private_notes ENABLE ROW LEVEL SECURITY;
+<hr>
 
--- 2. 建立存取策略
-CREATE POLICY user_access_policy ON private_notes
-FOR ALL
-USING (owner_id = current_setting('request.user_id'));
-</code></pre>
+<h2>身分注入</h2>
 
-<h2>3. SDK 調用方式</h2>
-<pre><code>// 前端設定身分
-sdk.auth('user_123');
+<p>在前端登入後，將 User ID 或 Token 注入 SDK：</p>
+<pre><code>sdk.auth('user_id_123');</code></pre>
 
-// 隨後的訂閱與查詢都會受到 RLS 保護
-sdk.collection('private_notes').onSnapshot(({ record: data }) => {
-    // 這裡只會收到 owner_id 為 'user_123' 的異動
-    console.log('受保護的資料：', data);
-});
-</code></pre>
+<p>這會使後續所有的 WebSocket 訂閱與 HTTP 請求都帶上身分識別。後端會自動在資料庫 Session 中執行：</p>
+<pre><code>SET LOCAL "request.user_id" = 'user_id_123';</code></pre>
+
+<hr>
+
+<h2>SQL 權限策略實作</h2>
+
+<p>您只需在 SQL 中定義規則，系統會自動在推送時套用過濾：</p>
+
+<pre><code>-- 僅允許使用者查看自己的私人筆記
+CREATE POLICY note_access_policy ON private_notes
+FOR SELECT
+USING (owner_id = current_setting('request.user_id')::text);</code></pre>
+
+<hr>
+
+<h2>優點</h2>
+<ul>
+    <li><strong>零後端代碼過濾</strong>: 不需在 Node.js 中寫 <code>if (data.owner !== user)</code>。</li>
+    <li><strong>即時生效</strong>: 當 SQL 策略更新，下一次推送立即套用新規則。</li>
+    <li><strong>強制執行</strong>: 即使開發者忘記在前端加過濾條件，資料庫也會硬性攔截非法數據。</li>
+</ul>
+
+<hr>
+
+<h2>🎓 接下來</h2>
+<p>前往 <a href="#/docs/rls-best-practices">RLS 最佳實踐</a> 深入了解各種業務場景的策略定義。</p>

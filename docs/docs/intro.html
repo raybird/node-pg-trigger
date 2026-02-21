@@ -1,18 +1,37 @@
-<h1>🚀 簡介與快速開始</h1>
-<p>
-  <code>pg-trigger-manager</code> 是一個基於 Node.js 與 PostgreSQL
-  的高效能即時資料庫事件廣播系統。
-</p>
-<h2>✨ 核心功能</h2>
-<ul>
-  <li><strong>即時事件廣播</strong>：基於 LISTEN/NOTIFY 原生機制。</li>
-  <li><strong>端到端型別安全</strong>：tRPC 驅動。</li>
-  <li><strong>Firestore 風格 SDK</strong>：熟悉的 onSnapshot 語法。</li>
-</ul>
+<h1>🚀 快速開始 (Quick Start)</h1>
 
-<h2>📌 建議閱讀順序</h2>
-<ol>
-  <li>先讀「安裝與配置」，完成資料庫與環境變數初始化。</li>
-  <li>再讀「SDK 使用指南」，先跑最小 onSnapshot 範例。</li>
-  <li>最後讀「身分驗證與 RLS」，把權限模型補齊到生產需求。</li>
-</ol>
+<p><code>node-pg-trigger</code> 讓您的 PostgreSQL 資料庫具備即時推送能力。本指南將引導您在 5 分鐘內完成配置並開始監聽資料變動。</p>
+
+<hr>
+
+<h2>1. 安裝套件</h2>
+<pre><code>npm install node-pg-trigger</code></pre>
+
+<h2>2. 初始化資料庫設施</h2>
+<p>在後端啟動時，調用 <code>runMigrations</code> 自動建立 Audit Log 表與 Trigger 函式：</p>
+<pre><code>import { runMigrations } from 'node-pg-trigger/server';
+
+await runMigrations();</code></pre>
+
+<h2>3. 為資料表啟用監聽</h2>
+<p>執行以下 SQL 為您的目標資料表綁定觸發器：</p>
+<pre><code>CREATE TRIGGER posts_notify_trigger
+AFTER INSERT OR UPDATE OR DELETE ON posts
+FOR EACH ROW EXECUTE FUNCTION notify_db_event();</code></pre>
+
+<h2>4. 前端開始訂閱</h2>
+<p>使用 Firestore 風格的語法即時獲取數據：</p>
+<pre><code>import { createSdk } from 'node-pg-trigger';
+
+const sdk = createSdk('http://localhost:3000');
+sdk.collection('posts').onSnapshot(snapshot => {
+  console.log('即時數據:', snapshot.record);
+});</code></pre>
+
+<hr>
+
+<h2>🎓 接下來</h2>
+<ul>
+    <li>查看 <a href="#/docs/sdk-usage">SDK 詳細用法</a> 學習過濾與排序。</li>
+    <li>了解 <a href="#/docs/rls-best-practices">RLS 最佳實踐</a> 確保數據安全。</li>
+</ul>

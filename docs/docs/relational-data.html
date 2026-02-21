@@ -1,57 +1,35 @@
-<h1>💎 關聯資料查詢 (Relational DSL)</h1>
+<h1>🔗 關聯資料查詢 (Relational Data)</h1>
 
-<p>Node-PG-Trigger 支援強大的關聯語意 DSL，讓您可以如同使用嵌套物件般，輕鬆抓取 PostgreSQL 中的關聯資料（Joins），且支援實時更新。</p>
+<p>不同於 NoSQL，<code>node-pg-trigger</code> 完美發揮了 PostgreSQL 的關聯優勢，支援在單次訂閱中獲取跨表的關聯數據。</p>
 
-<h2>🚀 使用 include() 語法</h2>
+<hr>
 
-<p>透過 <code>include()</code>，您可以定義要展開的關聯表、關聯欄位以及類型。</p>
+<h2>使用 include 展開關聯</h2>
 
-<pre><code class="language-typescript">
-// 範例：獲取貼文並自動展開作者資訊 (1:1)
-const posts = sdk.collection('posts')
-  .include('author', {
-    targetTable: 'users',
-    localField: 'author_id',
-    targetField: 'id',
-    type: '1:1',
-    select: ['name', 'avatar'] // 可選：僅選取特定欄位
-  });
+<p>透過 <code>include()</code> 語法，您可以指示後端執行高效的 <code>JOIN</code> 並將結果嵌套在 JSON 中返回。</p>
 
-posts.onSnapshot(({ record: list }) => {
-  list.forEach(post => {
-    console.log(`${post.title} by ${post.author.name}`);
-  });
-});
-</code></pre>
+<h3>1:1 關聯範例</h3>
+<p>獲取文章時，同時取得作者的資訊：</p>
+<pre><code>sdk.collection('posts')
+   .include('author') // 需在資料庫層定義好 FK 關聯
+   .onSnapshot(snap => {
+     // 輸出包含 { ..., author: { name: 'Ray' } }
+   });</code></pre>
 
-<h2>📦 支援的關聯類型</h2>
+<h3>1:N 子集合語法</h3>
+<p>獲取使用者及其所有的訂單：</p>
+<pre><code>sdk.doc('users', 'user_123')
+   .collection('orders')
+   .onSnapshot(orders => {
+     console.log('該使用者的訂單:', orders);
+   });</code></pre>
 
-<ul>
-  <li><strong>1:1 (Has One / Belongs To)</strong>: 獲取單一關聯對象。例如貼文的作者、使用者的設定檔。</li>
-  <li><strong>1:N (Has Many)</strong>: 獲取關聯列表。例如使用者的貼文列表、產品的評論。</li>
-</ul>
+<hr>
 
-<pre><code class="language-typescript">
-// 範例：獲取產品並展開其評論 (1:N)
-const products = sdk.collection('products')
-  .include('comments', {
-    targetTable: 'comments',
-    localField: 'id',
-    targetField: 'product_id',
-    type: '1:N'
-  });
+<h2>效能提示</h2>
+<p><code>include</code> 在後端使用 <code>JSON_AGG</code> 實作，對於前端而言是單次請求，效能優於多次迴圈查詢。但請注意不要過度嵌套（建議不超過 3 層），以維持最佳推送效能。</p>
 
-const list = await products.get();
-// list[0].comments 將會是一個陣列
-</code></pre>
+<hr>
 
-<h2>⚡ 效能與即時性</h2>
-
-<ul>
-  <li><strong>Server-side Joins</strong>: 關聯展開是在伺服器端透過高效的 SQL <code>LATERAL JOIN</code> 處理，客戶端僅需一次網路往返即可獲得完整嵌套 JSON。</li>
-  <li><strong>Realtime Chain</strong>: 當關聯表（如作者名稱）更新時，主表的訂閱會自動重新計算並推送最新快照（需搭配後端 Cascade Trigger）。</li>
-</ul>
-
-<div class="info-box">
-  <strong>提示：</strong> 您可以鏈式呼叫多個 <code>include()</code> 來展開不同的關聯欄位。
-</div>
+<h2>🎓 接下來</h2>
+<p>掌握 <a href="#/docs/rls-best-practices">RLS 最佳實踐</a> 確保這些關聯數據的安全性。</p>

@@ -1,174 +1,51 @@
-<h1>💎 SDK 使用指南</h1>
-<p>我們的 SDK 提供了一套極簡的介面來與資料庫互動。</p>
+<h1>💎 SDK 使用指南 (SDK Usage)</h1>
 
-<h2>1. 建立 SDK</h2>
-<pre><code>
-import { createSdk } from './client';
-const sdk = createSdk('http://localhost:5000');
-</code></pre>
+<p><code>node-pg-trigger</code> 提供了一套高度模擬 Firebase Firestore 的 API，讓 Web 開發者能無縫切換至 PostgreSQL 實時架構。</p>
 
-<h2>2. 即時訂閱（Collection）</h2>
-<pre><code>
-const unsubscribe = await sdk
-  .collection('users')
-  .onSnapshot(({ action, record }) => {
-    console.log('異動類型：', action);
-    console.log('最新資料：', record);
-  });
+<hr>
 
-// 離開頁面時建議解除訂閱
-unsubscribe();
-</code></pre>
+<h2>數據監聽 (Realtime Snapshots)</h2>
 
-<h2>3. valueChanges / subscribe 別名</h2>
-<pre><code>
-await sdk.collection('users').valueChanges((rows) => {
-  console.log('只有資料本體：', rows);
+<h3>監聽集合</h3>
+<pre><code>sdk.collection('posts')
+   .where('status', '==', 'published')
+   .orderBy('created_at', 'desc')
+   .limit(10)
+   .onSnapshot(snapshot => {
+     console.log('最新文章列表:', snapshot.record);
+   });</code></pre>
+
+<h3>監聽單一文件</h3>
+<pre><code>sdk.doc('posts', 'post_abc_123').onSnapshot(doc => {
+  console.log('文章內容已更新:', doc);
+});</code></pre>
+
+<hr>
+
+<h2>寫入操作 (Mutations)</h2>
+
+<h3>新增數據</h3>
+<pre><code>const docRef = await sdk.collection('posts').add({
+  title: 'Hello Vanilla',
+  content: '...'
 });
+console.log('產生的 ID:', docRef.id);</code></pre>
 
-await sdk.collection('users').subscribe(({ action, record }) => {
-  console.log('subscribe 別名：', action, record);
-});
-</code></pre>
+<h3>更新數據</h3>
+<pre><code>await sdk.doc('posts', 'id_123').update({
+  views: FieldValue.increment(1)
+});</code></pre>
 
-<h2>4. 文件操作（Document）</h2>
-<pre><code>
-const userRef = sdk.doc('users', 1);
+<hr>
 
-const exists = await userRef.exists();
-if (exists) {
-  await userRef.update({ name: 'Ray Bird' });
-}
+<h2>原子操作 (FieldValue)</h2>
+<ul>
+    <li><code>FieldValue.serverTimestamp()</code>: 使用資料庫伺服器時間。</li>
+    <li><code>FieldValue.increment(n)</code>: 原子增量/減量。</li>
+    <li><code>FieldValue.delete()</code>: 刪除特定欄位。</li>
+</ul>
 
-await userRef.set({ status: 'active' }, { merge: true });
-await userRef.delete();
-</code></pre>
+<hr>
 
-<h2>5. 查詢與 cursor 視窗</h2>
-<pre><code>
-const rows = await sdk
-  .collection('users')
-  .where('status', '==', 'active')
-  .orderBy('created_at', 'asc')
-  .startAfter('2026-02-20T00:00:00.000Z')
-  .endAt('2026-02-20T23:59:59.999Z')
-  .limit(20)
-  .get();
-
-const count = await sdk
-  .collection('users')
-  .where('status', '==', 'active')
-  .count();
-</code></pre>
-
-<h2>6. FieldValue 伺服器原子操作</h2>
-<pre><code>
-import { FieldValue } from './client';
-
-await sdk.collection('posts').add({
-  title: 'New Post',
-  createdAt: FieldValue.serverTimestamp(),
-});
-
-await sdk.doc('posts', 1).update({
-  views: FieldValue.increment(1),
-  tags: FieldValue.arrayUnion('news'),
-});
-</code></pre>
-
-<h2>7. withConverter 欄位映射</h2>
-<pre><code>
-const userConverter = {
-  fromFirestore(row) {
-    return { id: row.id, displayName: row.name };
-  },
-  toFirestore(model) {
-    return { name: model.displayName };
-  },
-};
-
-const users = sdk.collection('users').withConverter(userConverter);
-const list = await users.get();
-console.log(list[0].displayName);
-</code></pre>
-
-<h2>8. 聚合查詢（Aggregation）</h2>
-<p>提供高效的伺服器端統計功能，無需拉取大量原始資料即可獲取結果。</p>
-<pre><code>
-import { count, sum, average } from './client';
-
-// 獲取總數 (Server-side COUNT)
-const total = await sdk.collection('users').count();
-
-// 複雜聚合 (Server-side SUM/AVG)
-const stats = await sdk.collection('orders')
-  .where('status', '==', 'shipped')
-  .aggregate({
-    orderCount: count(),
-    totalRevenue: sum('amount'),
-    avgAmount: average('amount')
-  });
-
-console.log('總訂單數：', stats.orderCount);
-console.log('總營收：', stats.totalRevenue);
-</code></pre>
-
-<h2>9. 讀寫交易（Transactions）</h2>
-<p>交易確保了「讀取-修改-寫入」過程的原子性。如果資料在讀取後被修改，交易會自動重試。</p>
-<pre><code>
-await sdk.runTransaction(async (transaction) => {
-    const docRef = sdk.doc('counters', 'likes');
-    
-    // 讀取最新值
-    const doc = await transaction.get(docRef);
-    const newVal = (doc?.count || 0) + 1;
-    
-    // 寫入回資料庫 (帶有版本校驗)
-    transaction.update(docRef, { count: newVal });
-});
-</code></pre>
-
-<h2>10. 離線持久化（Persistence）</h2>
-<p>啟用後，SDK 會將資料快照儲存在瀏覽器的 IndexedDB 中。重新載入頁面時會立即顯示舊數據，提昇極速啟動體驗。</p>
-<pre><code>
-// 啟動持久化
-await sdk.enablePersistence();
-
-sdk.collection('users').onSnapshot(({ record, metadata }) => {
-    if (metadata.fromCache) {
-        console.log('數據來自本地快取');
-    }
-    renderUI(record);
-});
-</code></pre>
-
-<h2>11. 子集合與集合群組（Subcollections）</h2>
-<p>提供與 Firestore 一致的嵌套路徑語法，簡化外鍵查詢流程。</p>
-<pre><code>
-// 子集合：獲取指定文件的關聯資料
-const userPosts = sdk.doc('users', 1).collection('posts');
-const list = await userPosts.get();
-
-// 集合群組：跨文件的廣域搜尋
-const allComments = await sdk.collectionGroup('comments').get();
-</code></pre>
-
-<h2>12. 參考與導航（References & Navigation）</h2>
-<p>SDK 提供強大的屬性來協助您管理資源定位與導航。</p>
-<pre><code>
-// 1. 自動生成 ID
-const newDocRef = sdk.collection('users').doc();
-console.log('生成的 ID：', newDocRef.id);
-
-// 2. add() 傳回文件參考
-const ref = await sdk.collection('posts').add({ title: 'Hello' });
-console.log('新文章路徑：', ref.path);
-
-// 3. 屬性導航
-const userRef = sdk.doc('users', 'raybird');
-console.log(userRef.id);   // 'raybird'
-console.log(userRef.path); // 'public/users/raybird'
-const parentCol = userRef.parent; // 返回 Collection 物件
-</code></pre>
-
-<p>更多 API 速查請見：<code>docs/firestore-realtime-cheatsheet.md</code></p>
+<h2>🎓 接下來</h2>
+<p>了解如何處理 <a href="#/docs/relational-data">關聯資料查詢</a>。</p>
