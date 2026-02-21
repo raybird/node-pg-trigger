@@ -26,7 +26,8 @@ export class App extends BaseComponent {
 
     async loadDoc(id) {
         try {
-            const response = await fetch(`./docs/${id}.html`);
+            // 新增時間戳以粉碎快取
+            const response = await fetch(`./docs/${id}.html?v=${new Date().getTime()}`);
             const html = await response.ok ? await response.text() : '<h1>404</h1>文件未找到';
             this.setState({ currentDoc: id, content: html });
         } catch (err) {
