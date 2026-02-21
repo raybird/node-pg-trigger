@@ -348,11 +348,14 @@ export class Query<T = any> {
       const isMatch = this.matchesFilters(record);
       let changed = false;
 
-      // 簡化維護邏輯
       if (event.action === "insert" && isMatch) {
-        if (this._include && !isOptimistic) record = await this.patchRelations(record);
-        this.cache = [...this.cache, record];
-        changed = true;
+        // 防止重複：檢查是否存在相同內容或待定紀錄 (簡單比對)
+        const exists = this.cache.some((i: any) => i.id === record.id);
+        if (!exists) {
+          if (this._include && !isOptimistic) record = await this.patchRelations(record);
+          this.cache = [...this.cache, record];
+          changed = true;
+        }
       } else if (event.action === "update") {
         const id = (record as any).id;
         const exists = this.cache.some((item: any) => item.id === id);
@@ -421,10 +424,33 @@ export class Collection<T = any> extends Query<T> {
   get id(): string { return this.tableName; }
   get path(): string { return `${this.schemaName}/${this.tableName}`; }
 
+  /**
+   * add - 新增資料並回傳 Document 參考 (支援樂觀更新)
+   */
   async add(record: Partial<T>): Promise<Document<T>> {
     const wireData = this.toWire(record);
-    const result = await this.sdk.client.data.add.mutate({ tableName: this.tableName, schemaName: this.schemaName, record: wireData });
-    return this.doc(result.id);
+    const tempId = uuidv4();
+
+    // 樂觀更新：發布本地 insert 事件
+    this.sdk.localEvents.publish({
+      timestamp: new Date().toISOString(),
+      txid: 0,
+      action: "insert",
+      schema: this.schemaName,
+      table: this.tableName,
+      record: { ...wireData, id: tempId } as any,
+      old_record: null,
+      metadata: { fromCache: false, hasPendingWrites: true },
+    });
+
+    const result = await this.sdk.client.data.add.mutate({
+      tableName: this.tableName,
+      schemaName: this.schemaName,
+      record: wireData,
+    });
+
+    // 伺服器回傳後，自動觸發一次更新以替換 tempId (透過 handleEvent 機制)
+    return this.doc(result.id || (result as any).id);
   }
 
   doc(id?: string | number, idField: string = "id"): Document<T> {

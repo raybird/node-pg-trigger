@@ -264,12 +264,15 @@ class Query {
                 let record = this.toModel(event.record);
                 const isMatch = this.matchesFilters(record);
                 let changed = false;
-                // 簡化維護邏輯
                 if (event.action === "insert" && isMatch) {
-                    if (this._include && !isOptimistic)
-                        record = yield this.patchRelations(record);
-                    this.cache = [...this.cache, record];
-                    changed = true;
+                    // 防止重複：檢查是否存在相同內容或待定紀錄 (簡單比對)
+                    const exists = this.cache.some((i) => i.id === record.id);
+                    if (!exists) {
+                        if (this._include && !isOptimistic)
+                            record = yield this.patchRelations(record);
+                        this.cache = [...this.cache, record];
+                        changed = true;
+                    }
                 }
                 else if (event.action === "update") {
                     const id = record.id;
@@ -338,11 +341,31 @@ class Collection extends Query {
     }
     get id() { return this.tableName; }
     get path() { return `${this.schemaName}/${this.tableName}`; }
+    /**
+     * add - 新增資料並回傳 Document 參考 (支援樂觀更新)
+     */
     add(record) {
         return __awaiter(this, void 0, void 0, function* () {
             const wireData = this.toWire(record);
-            const result = yield this.sdk.client.data.add.mutate({ tableName: this.tableName, schemaName: this.schemaName, record: wireData });
-            return this.doc(result.id);
+            const tempId = (0, uuid_1.v4)();
+            // 樂觀更新：發布本地 insert 事件
+            this.sdk.localEvents.publish({
+                timestamp: new Date().toISOString(),
+                txid: 0,
+                action: "insert",
+                schema: this.schemaName,
+                table: this.tableName,
+                record: Object.assign(Object.assign({}, wireData), { id: tempId }),
+                old_record: null,
+                metadata: { fromCache: false, hasPendingWrites: true },
+            });
+            const result = yield this.sdk.client.data.add.mutate({
+                tableName: this.tableName,
+                schemaName: this.schemaName,
+                record: wireData,
+            });
+            // 伺服器回傳後，自動觸發一次更新以替換 tempId (透過 handleEvent 機制)
+            return this.doc(result.id || result.id);
         });
     }
     doc(id, idField = "id") {

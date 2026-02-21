@@ -44,7 +44,27 @@ const sdk = createSdk("http://localhost:5000");
 - `valueChanges(cb)`: 只回傳單筆資料本體。
 - `subscribe(cb)`: `onSnapshot` 別名。
 
-## 4) Converter 型別映射
+## 4) 參考導航與 ID 生成
+
+- `id`: 取得集合或文件 ID（例如表名或主鍵值）。
+- `path`: 取得完整路徑 (schema/table/id)。
+- `parent`: 從文件導航回其所屬集合參考。
+- `collection.doc()`: 若不傳 ID 則自動生成 20 碼隨機識別碼 (UUID)。
+- `collection.add(data)`: **回傳 `Document` 參考**，支援鏈式操作。
+
+## 5) 樂觀 UI 與元數據
+
+SDK 在執行 `add/update/set/delete` 時會立即觸發本地監聽器。您可透過 `metadata` 判斷狀態：
+
+```ts
+query.onSnapshot(({ record, metadata }) => {
+  if (metadata.hasPendingWrites) {
+    console.log("數據正在同步中...");
+  }
+});
+```
+
+## 6) Converter 型別映射
 
 ```ts
 const users = sdk.collection("users").withConverter({

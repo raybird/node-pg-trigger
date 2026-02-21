@@ -25,11 +25,13 @@
 <h2>寫入操作 (Mutations)</h2>
 
 <h3>新增數據</h3>
-<pre><code>const docRef = await sdk.collection('posts').add({
+<pre><code>// 支援樂觀更新，UI 會立即響應
+const docRef = await sdk.collection('posts').add({
   title: 'Hello Vanilla',
   content: '...'
 });
-console.log('產生的 ID:', docRef.id);</code></pre>
+console.log('產生的 ID:', docRef.id);
+console.log('資源路徑:', docRef.path);</code></pre>
 
 <h3>更新數據</h3>
 <pre><code>await sdk.doc('posts', 'id_123').update({
