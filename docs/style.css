@@ -133,57 +133,33 @@ pre { background: #f4f4f4; padding: 1.2rem; border-radius: 8px; overflow-x: auto
 code { font-family: monospace; background: rgba(0,0,0,0.05); padding: 0.2rem 0.4rem; border-radius: 4px; }
 img { max-width: 100%; height: auto; border-radius: 8px; }
 
-/* 🏆 響應式斷點 (768px 以下為移動端 - 對齊 plainvanillaweb) */
+/* 🏆 響應式佈局斷點 (768px 以下為移動端) */
 @media (max-width: 768px) {
-    .app-container {
-        flex-direction: column;
-    }
-
     .sidebar {
-        width: 100%;
-        height: auto;
-        position: static;
-        padding: 1rem;
-        border-right: none;
-        border-bottom: 1px solid var(--border-color);
-        box-shadow: none;
+        transform: translateX(-100%);
+        width: 280px;
+        position: fixed;
+        height: 100vh;
+        z-index: 1000;
     }
 
-    .sidebar h2 {
-        margin-bottom: 1rem;
-        font-size: 1.2rem;
-    }
-
-    .sidebar nav {
-        display: flex;
-        flex-direction: row;
-        flex-wrap: wrap; /* 平鋪 */
-        gap: 0.5rem;
-        overflow: visible;
-    }
-
-    .nav-link {
-        display: inline-block;
-        padding: 0.4rem 0.8rem;
-        font-size: 0.85rem;
-        background: #f0f0f0;
-        border-radius: 999px;
-        margin-bottom: 0;
-    }
-
-    .nav-link.active {
-        background-color: var(--primary-color);
-        color: white;
+    .sidebar.open {
+        transform: translateX(0);
     }
 
     .main-content {
         margin-left: 0;
         width: 100%;
         padding: 1.5rem;
+        padding-top: 4.5rem; /* 為漢堡按鈕留空 */
     }
 
-    .hamburger-btn, .menu-overlay {
-        display: none !important;
+    .hamburger-btn {
+        display: flex;
+    }
+
+    .menu-overlay.open {
+        display: block;
     }
 }
 

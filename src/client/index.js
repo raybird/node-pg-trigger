@@ -412,16 +412,46 @@ class Document {
     }
     update(record) {
         return __awaiter(this, void 0, void 0, function* () {
+            // 樂觀更新：發布本地 update 事件
+            this.sdk.localEvents.publish({
+                timestamp: new Date().toISOString(),
+                txid: 0,
+                action: "update",
+                schema: this.schemaName,
+                table: this.tableName,
+                record: Object.assign(Object.assign({}, record), { [this.idField]: this._id }),
+                old_record: null,
+                metadata: { fromCache: false, hasPendingWrites: true },
+            });
             const updated = yield this.sdk.client.data.update.mutate({
-                tableName: this.tableName, schemaName: this.schemaName,
-                id: this._id, idField: this.idField, record
+                tableName: this.tableName,
+                schemaName: this.schemaName,
+                id: this._id,
+                idField: this.idField,
+                record,
             });
             return updated;
         });
     }
     delete() {
         return __awaiter(this, void 0, void 0, function* () {
-            yield this.sdk.client.data.delete.mutate({ tableName: this.tableName, schemaName: this.schemaName, id: this._id, idField: this.idField });
+            // 樂觀更新：發布本地 delete 事件
+            this.sdk.localEvents.publish({
+                timestamp: new Date().toISOString(),
+                txid: 0,
+                action: "delete",
+                schema: this.schemaName,
+                table: this.tableName,
+                record: null,
+                old_record: { [this.idField]: this._id },
+                metadata: { fromCache: false, hasPendingWrites: true },
+            });
+            yield this.sdk.client.data.delete.mutate({
+                tableName: this.tableName,
+                schemaName: this.schemaName,
+                id: this._id,
+                idField: this.idField,
+            });
         });
     }
 }

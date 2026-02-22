@@ -490,15 +490,47 @@ export class Document<T = any> {
   }
 
   async update(record: Partial<T>): Promise<T | null> {
+    // 樂觀更新：發布本地 update 事件
+    this.sdk.localEvents.publish({
+      timestamp: new Date().toISOString(),
+      txid: 0,
+      action: "update",
+      schema: this.schemaName,
+      table: this.tableName,
+      record: { ...record, [this.idField]: this._id } as any,
+      old_record: null,
+      metadata: { fromCache: false, hasPendingWrites: true },
+    });
+
     const updated = await this.sdk.client.data.update.mutate({
-      tableName: this.tableName, schemaName: this.schemaName,
-      id: this._id, idField: this.idField, record
+      tableName: this.tableName,
+      schemaName: this.schemaName,
+      id: this._id,
+      idField: this.idField,
+      record,
     });
     return updated;
   }
 
   async delete(): Promise<void> {
-    await this.sdk.client.data.delete.mutate({ tableName: this.tableName, schemaName: this.schemaName, id: this._id, idField: this.idField });
+    // 樂觀更新：發布本地 delete 事件
+    this.sdk.localEvents.publish({
+      timestamp: new Date().toISOString(),
+      txid: 0,
+      action: "delete",
+      schema: this.schemaName,
+      table: this.tableName,
+      record: null,
+      old_record: { [this.idField]: this._id } as any,
+      metadata: { fromCache: false, hasPendingWrites: true },
+    });
+
+    await this.sdk.client.data.delete.mutate({
+      tableName: this.tableName,
+      schemaName: this.schemaName,
+      id: this._id,
+      idField: this.idField,
+    });
   }
 }
 

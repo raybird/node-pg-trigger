@@ -5,6 +5,7 @@ export class App extends BaseComponent {
         super();
         this.state = {
             currentDoc: 'intro',
+            isMenuOpen: false,
             docs: [
                 { id: 'intro', title: '🚀 簡介與快速開始' },
                 { id: 'installation', title: '📦 安裝與配置' },
@@ -29,16 +30,28 @@ export class App extends BaseComponent {
             // 新增時間戳以粉碎快取
             const response = await fetch(`./docs/${id}.html?v=${new Date().getTime()}`);
             const html = await response.ok ? await response.text() : '<h1>404</h1>文件未找到';
-            this.setState({ currentDoc: id, content: html });
+            this.setState({ currentDoc: id, content: html, isMenuOpen: false });
+            window.scrollTo(0, 0);
         } catch (err) {
             this.setState({ content: '載入錯誤' });
         }
     }
 
+    toggleMenu() {
+        this.setState({ isMenuOpen: !this.state.isMenuOpen });
+    }
+
     template() {
         return this.html`
             <div class="app-container">
-                <aside class="sidebar">
+                <button class="hamburger-btn" onclick="this.closest('x-app').toggleMenu()">
+                    ${this.state.isMenuOpen ? '✕' : '☰'}
+                </button>
+
+                <div class="menu-overlay ${this.state.isMenuOpen ? 'open' : ''}" 
+                     onclick="this.closest('x-app').toggleMenu()"></div>
+
+                <aside class="sidebar ${this.state.isMenuOpen ? 'open' : ''}">
                     <div class="sidebar-header">
                         <h2>PG Trigger</h2>
                     </div>
