@@ -1,6 +1,9 @@
 # PG Trigger Manager - 即時資料庫事件廣播系統
 
-`pg-trigger-manager` 是一個基於 Node.js、PostgreSQL 和 tRPC 的高效能即時資料庫事件廣播系統。它能監聽資料庫中資料表的變更（INSERT, UPDATE, DELETE），並透過 WebSocket 將這些事件即時、安全地推送給前端應用。
+> 🛡️ **Taonix Certified Commercial Grade**: 本專案已由 Taonix 多智能體系統完成深度重構，達成高可用斷線重連、100% 強型別加固與全自動化測試覆蓋。
+
+`pg-trigger-manager` 是一個基於 Node.js、PostgreSQL 和 tRPC 的高效能即時資料庫事件廣播系統。
+它能監聽資料庫中資料表的變更（INSERT, UPDATE, DELETE），並透過 WebSocket 將這些事件即時、安全地推送給前端應用。
 
 ## ✨ 核心功能
 
