@@ -58,8 +58,20 @@ class NotificationListener {
     this.subscriber = createSubscriber({ connectionString: databaseURL });
 
     this.subscriber.notifications.on('db_events', (payload) => {
-      console.log('[PG-Trigger] Received notification:', payload.table, payload.action);
+      const startTime = performance.now();
+      // v1.4.0 效能優化：pg-listen 已自動解析 JSON
+      // 這裡僅進行結構校驗與分發
+      if (!payload || !payload.table || !payload.action) {
+        console.warn('[PG-Trigger] Received invalid payload, skipping.');
+        return;
+      }
+
       eventBus.publish(payload);
+      
+      const duration = performance.now() - startTime;
+      if (duration > 50) { // 耗時超過 50ms 則記錄警告
+        console.warn(`[PG-Trigger] Slow payload processing: ${duration.toFixed(2)}ms for table ${payload.table}`);
+      }
     });
 
     this.subscriber.events.on('error', (error) => {
