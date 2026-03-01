@@ -334,13 +334,31 @@ REDIS_URL=redis://localhost:6379
 
 在此模式下，任何節點接收到的 PostgreSQL 異動都會透過 Redis Pub/Sub 同步給所有節點，確保全站客戶端都能即時收到更新。
 
-### 可靠性與追補機制
+### 後端事件訂閱 (Server-side EventBus)
 
-SDK 內建了強大的斷線自癒能力。利用 PostgreSQL 的交易 ID (txid) 與後端的 `audit_log` 機制，當您的應用程式重新連線時，SDK 會自動請求補發所有遺漏的異動事件。
+自 v1.4.0 起，系統提供強型別的後端事件總線，方便在 Node.js 環境中直接對接業務邏輯。
 
-- **自動追補**：斷線重連後，SDK 會自動從最後接收到的事件點開始追補。
-- **資料一致性**：確保前端快取與資料庫狀態始終維持高度同步。
-- **效能優化**：追補查詢經過索引優化，僅撈取必要的差異數據。
+```typescript
+import { eventBus } from './server/lib/event-bus';
+import { TriggerPayload } from './server/lib/types';
+
+// 1. 全域監聽
+eventBus.subscribe((payload: TriggerPayload) => {
+  console.log(`[Global] 偵測到 ${payload.table} 的 ${payload.action} 變動`);
+});
+
+// 2. 針對特定資料表的特定動作監聽 (高效能過濾)
+eventBus.onTableEvent('users', 'insert', (payload) => {
+  const newUser = payload.record;
+  sendWelcomeEmail(newUser.email);
+});
+```
+
+### 可靠性與效能 (Commercial Grade)
+
+- **自動斷線重連**：監聽器內建指數退避重連機制，具備基礎設施自動修復能力。
+- **高效能解析**：優化了資料庫通知的解析流程，在大併發下保持低 CPU 佔用。
+- **效能監控**：當單次 Payload 解析超過 50ms 時，系統會自動發布警告。
 
 ### 進階查詢支援
 
