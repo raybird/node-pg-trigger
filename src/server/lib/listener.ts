@@ -49,6 +49,8 @@ $function$;
 
 class NotificationListener {
   private subscriber: ReturnType<typeof createSubscriber>;
+  private reconnectInterval = 5000; // 基礎重連間隔 (5秒)
+  private maxReconnectInterval = 60000; // 最大重連間隔 (1分鐘)
 
   constructor() {
     const databaseURL = `postgres://${process.env.POSTGRES_USER}:${process.env.POSTGRES_PASSWORD}@${process.env.POSTGRES_HOST}:${process.env.POSTGRES_PORT || 5432}/${process.env.POSTGRES_DB}`;
@@ -56,14 +58,21 @@ class NotificationListener {
     this.subscriber = createSubscriber({ connectionString: databaseURL });
 
     this.subscriber.notifications.on('db_events', (payload) => {
-      console.log('Received notification on db_events:', payload);
-      // 將事件分發至全域 EventBus
+      console.log('[PG-Trigger] Received notification:', payload.table, payload.action);
       eventBus.publish(payload);
     });
 
     this.subscriber.events.on('error', (error) => {
-      console.error('Fatal database connection error:', error);
-      process.exit(1);
+      console.error('[PG-Trigger] Database connection error:', error.message);
+      // v1.1.0 Fix: 不再直接結束進程，等待 pg-listen 內建的重連邏輯或手動觸發
+    });
+
+    this.subscriber.events.on('reconnect', (attempt) => {
+      console.warn(`[PG-Trigger] Attempting to reconnect (Attempt ${attempt})...`);
+    });
+
+    this.subscriber.events.on('connected', () => {
+      console.log('[PG-Trigger] Connected/Reconnected to database.');
     });
   }
 
@@ -72,42 +81,49 @@ class NotificationListener {
    */
   private async initInfrastructure() {
     console.log('🔧 Initializing database infrastructure...');
-    
-    // 1. 確保 notify_trigger 函式存在
-    await db.query(NOTIFY_FUNCTION_SQL);
-    console.log('✅ Global notify_trigger() function is ready.');
+    try {
+      await db.query(NOTIFY_FUNCTION_SQL);
+      console.log('✅ Global notify_trigger() function is ready.');
 
-    // 2. 檢查環境變數並自動建立觸發器
-    const watchTables = process.env.WATCH_TABLES;
-    if (watchTables) {
-      const tables = watchTables.split(',').map(t => t.trim());
-      for (const table of tables) {
-        if (!table) continue;
-        const triggerName = `t_notify_${table}`;
-        const sql = `
-          DO $$
-          BEGIN
-            IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_name = '${triggerName}') THEN
-              CREATE TRIGGER ${triggerName}
-              AFTER INSERT OR UPDATE OR DELETE ON "${table}"
-              FOR EACH ROW EXECUTE PROCEDURE public.notify_trigger();
-            END IF;
-          END $$;
-        `;
-        await db.query(sql);
-        console.log(`📡 Auto-watching table: ${table}`);
+      const watchTables = process.env.WATCH_TABLES;
+      if (watchTables) {
+        const tables = watchTables.split(',').map(t => t.trim());
+        for (const table of tables) {
+          if (!table) continue;
+          const triggerName = `t_notify_${table}`;
+          const sql = `
+            DO $$
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.triggers WHERE trigger_name = '${triggerName}') THEN
+                CREATE TRIGGER ${triggerName}
+                AFTER INSERT OR UPDATE OR DELETE ON "${table}"
+                FOR EACH ROW EXECUTE PROCEDURE public.notify_trigger();
+              END IF;
+            END $$;
+          `;
+          await db.query(sql);
+          console.log(`📡 Auto-watching table: ${table}`);
+        }
       }
+    } catch (e) {
+      console.error('❌ Failed to initialize infrastructure:', e.message);
+      // 基礎設施初始化失敗則等待後重試
+      setTimeout(() => this.initInfrastructure(), this.reconnectInterval);
     }
   }
 
   public async connect() {
-    // 先初始化基礎設施
+    // 1. 先初始化基礎設施
     await this.initInfrastructure();
     
-    // 再開始監聽
-    await this.subscriber.connect();
-    await this.subscriber.listenTo('db_events');
-    console.log('🚀 Listening for notifications on "db_events" channel...');
+    // 2. 開始監聽 (pg-listen 內建重連)
+    try {
+      await this.subscriber.connect();
+      await this.subscriber.listenTo('db_events');
+      console.log('🚀 Listening for notifications on "db_events" channel...');
+    } catch (e) {
+      console.error('❌ Connection failed, will retry automatically.');
+    }
   }
 }
 
